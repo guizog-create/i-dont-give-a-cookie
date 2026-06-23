@@ -1,203 +1,318 @@
-<!doctype html>
-<html>
-  <head>
-    <meta charset="UTF-8" />
-    <title>I Don't Give a Cookie</title>
-    <style>
-      * {
-        box-sizing: border-box;
-        margin: 0;
-        padding: 0;
-      }
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>I Don't Give a Cookie</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
 
-      body {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
-          "Helvetica Neue", Arial, sans-serif;
-        width: 300px;
-        padding: 16px;
-        background: #fafafa;
-        color: #333;
-      }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      width: 320px;
+      background: #1a1a2e;
+      color: #e0e0e0;
+      font-size: 14px;
+    }
 
-      .header {
-        display: flex;
-        align-items: center;
-        gap: 10px;
-        margin-bottom: 16px;
-        padding-bottom: 12px;
-        border-bottom: 1px solid #e0e0e0;
-      }
+    .header {
+      background: linear-gradient(135deg, #16213e 0%, #0f3460 100%);
+      padding: 16px;
+      text-align: center;
+      border-bottom: 1px solid #2a2a4a;
+    }
 
-      .header img {
-        width: 32px;
-        height: 32px;
-      }
+    .header h1 {
+      font-size: 16px;
+      font-weight: 700;
+      color: #fff;
+      margin-bottom: 4px;
+    }
 
-      .header h1 {
-        font-size: 15px;
-        font-weight: 600;
-        color: #1a1a1a;
-      }
+    .header .version {
+      font-size: 11px;
+      color: #8892b0;
+    }
 
-      .header .version {
-        font-size: 11px;
-        color: #888;
-        margin-left: auto;
-      }
+    .section {
+      padding: 12px 16px;
+      border-bottom: 1px solid #2a2a4a;
+    }
 
-      .toggle-row {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 12px 0;
-      }
+    .section-title {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #8892b0;
+      margin-bottom: 8px;
+    }
 
-      .toggle-row label {
-        font-size: 13px;
-        font-weight: 500;
-        cursor: pointer;
-      }
+    /* Toggle Switch */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 0;
+    }
 
-      /* Toggle switch */
-      .switch {
-        position: relative;
-        width: 44px;
-        height: 24px;
-      }
+    .toggle-label {
+      font-size: 13px;
+      color: #e0e0e0;
+    }
 
-      .switch input {
-        opacity: 0;
-        width: 0;
-        height: 0;
-      }
+    .toggle-sublabel {
+      font-size: 11px;
+      color: #8892b0;
+      margin-top: 2px;
+    }
 
-      .slider {
-        position: absolute;
-        cursor: pointer;
-        top: 0;
-        left: 0;
-        right: 0;
-        bottom: 0;
-        background-color: #ccc;
-        transition: 0.3s;
-        border-radius: 24px;
-      }
+    .switch {
+      position: relative;
+      width: 40px;
+      height: 22px;
+      flex-shrink: 0;
+    }
 
-      .slider:before {
-        position: absolute;
-        content: "";
-        height: 18px;
-        width: 18px;
-        left: 3px;
-        bottom: 3px;
-        background-color: white;
-        transition: 0.3s;
-        border-radius: 50%;
-      }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
 
-      input:checked + .slider {
-        background-color: #4caf50;
-      }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #4a4a6a;
+      transition: 0.3s;
+      border-radius: 22px;
+    }
 
-      input:checked + .slider:before {
-        transform: translateX(20px);
-      }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: #fff;
+      transition: 0.3s;
+      border-radius: 50%;
+    }
 
-      .stats {
-        margin-top: 12px;
-        padding: 10px 12px;
-        background: #fff;
-        border: 1px solid #e8e8e8;
-        border-radius: 8px;
-      }
+    input:checked + .slider {
+      background-color: #4CAF50;
+    }
 
-      .stats-title {
-        font-size: 11px;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-        color: #888;
-        margin-bottom: 6px;
-      }
+    input:checked + .slider:before {
+      transform: translateX(18px);
+    }
 
-      .stats-value {
-        font-size: 22px;
-        font-weight: 700;
-        color: #4caf50;
-      }
+    /* Stats */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
 
-      .stats-label {
-        font-size: 11px;
-        color: #666;
-        margin-top: 2px;
-      }
+    .stat-card {
+      background: #2a2a4a;
+      border-radius: 8px;
+      padding: 10px;
+      text-align: center;
+    }
 
-      .footer {
-        margin-top: 14px;
-        padding-top: 12px;
-        border-top: 1px solid #e0e0e0;
-        font-size: 11px;
-        color: #888;
-        line-height: 1.5;
-      }
+    .stat-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: #4CAF50;
+    }
 
-      .footer a {
-        color: #4caf50;
-        text-decoration: none;
-      }
+    .stat-label {
+      font-size: 10px;
+      color: #8892b0;
+      margin-top: 2px;
+    }
 
-      .footer a:hover {
-        text-decoration: underline;
-      }
+    /* Site Status */
+    .site-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 12px;
+      background: #2a2a4a;
+      border-radius: 8px;
+      margin-top: 8px;
+    }
 
-      .status-indicator {
-        display: inline-block;
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        margin-right: 6px;
-        background: #ccc;
-      }
+    .site-status .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
 
-      .status-indicator.active {
-        background: #4caf50;
-      }
+    .site-status .dot.active { background: #4CAF50; }
+    .site-status .dot.blocked { background: #f44336; }
+    .site-status .dot.idle { background: #8892b0; }
 
-      .status-indicator.inactive {
-        background: #f44336;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="header">
-      <img src="icons/icon48.png" alt="Cookie icon" />
-      <h1>I Don't Give a Cookie</h1>
-      <span class="version">v1.0.0</span>
-    </div>
+    .site-status .site-info {
+      flex: 1;
+      min-width: 0;
+    }
 
+    .site-status .site-name {
+      font-size: 12px;
+      font-weight: 500;
+      color: #e0e0e0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .site-status .site-detail {
+      font-size: 10px;
+      color: #8892b0;
+    }
+
+    /* Buttons */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: background 0.2s;
+    }
+
+    .btn-block {
+      background: #f44336;
+      color: #fff;
+    }
+
+    .btn-block:hover {
+      background: #d32f2f;
+    }
+
+    .btn-allow {
+      background: #4CAF50;
+      color: #fff;
+    }
+
+    .btn-allow:hover {
+      background: #388E3C;
+    }
+
+    .btn-secondary {
+      background: #3a3a5a;
+      color: #e0e0e0;
+    }
+
+    .btn-secondary:hover {
+      background: #4a4a6a;
+    }
+
+    .btn-row {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+    }
+
+    /* Footer */
+    .footer {
+      padding: 10px 16px;
+      text-align: center;
+      font-size: 10px;
+      color: #6a6a8a;
+    }
+
+    .footer a {
+      color: #8892b0;
+      text-decoration: none;
+    }
+
+    .footer a:hover {
+      color: #e0e0e0;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>I Don't Give a Cookie</h1>
+    <div class="version" id="version">v2.0.0</div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Global</div>
     <div class="toggle-row">
-      <label for="enabled">
-        <span class="status-indicator" id="statusDot"></span>
-        Auto-accept cookies
-      </label>
-      <div class="switch">
-        <input type="checkbox" id="enabled" />
+      <div>
+        <div class="toggle-label">Extension Enabled</div>
+        <div class="toggle-sublabel">Auto-accept cookie banners</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="enableToggle" checked>
         <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Current Site</div>
+    <div class="site-status" id="siteStatus">
+      <div class="dot idle" id="statusDot"></div>
+      <div class="site-info">
+        <div class="site-name" id="siteName">Loading...</div>
+        <div class="site-detail" id="siteDetail">Checking status...</div>
       </div>
     </div>
-
-    <div class="stats">
-      <div class="stats-title">Banners dismissed</div>
-      <div class="stats-value" id="totalCount">0</div>
-      <div class="stats-label">cookie popups handled automatically</div>
+    <div class="btn-row">
+      <button class="btn btn-block" id="blockSiteBtn">Block This Site</button>
+      <button class="btn btn-allow" id="allowSiteBtn" style="display:none">Allow This Site</button>
+      <button class="btn btn-secondary" id="reScanBtn">Re-scan</button>
     </div>
+  </div>
 
-    <div class="footer">
-      Supports 30+ languages and all major consent platforms.
-      If a site misbehaves, toggle off and reload.
-      <br /><br />
-      <a href="https://github.com/guizog-create/i-dont-give-a-cookie" target="_blank">GitHub</a>
+  <div class="section">
+    <div class="section-title">Statistics</div>
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-value" id="totalDismissed">0</div>
+        <div class="stat-label">Banners Dismissed</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-value" id="sitesCount">0</div>
+        <div class="stat-label">Sites Handled</div>
+      </div>
     </div>
+  </div>
 
-    <script src="popup.js"></script>
-  </body>
+  <div class="section">
+    <div class="toggle-row">
+      <div>
+        <div class="toggle-label">Debug Mode</div>
+        <div class="toggle-sublabel">Log actions to console</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" id="debugToggle">
+        <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <div class="footer">
+    <a href="https://github.com/guizog-create/i-dont-give-a-cookie" target="_blank">GitHub</a>
+    &nbsp;&middot;&nbsp; MIT License
+  </div>
+
+  <script src="popup.js"></script>
+</body>
 </html>

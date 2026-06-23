@@ -1,33 +1,45 @@
 // I Don't Give a Cookie - Universal Cookie Consent Auto-Acceptor
-// v1.0.0 - Production-grade engine with CMP support, multilingual detection,
-// shadow DOM traversal, debounced observers, and advanced heuristics.
+// v2.0.0 - Hardened production engine with click verification, CSS fallback,
+// SPA support, error recovery, and bulletproof detection pipeline.
 
 (() => {
   "use strict";
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // GLOBAL ERROR BOUNDARY
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const EXTENSION_ID = "IDGAC";
+  let debugMode = false;
+
+  function log(...args) {
+    if (debugMode) console.log(`[${EXTENSION_ID}]`, ...args);
+  }
+
+  function logError(...args) {
+    if (debugMode) console.error(`[${EXTENSION_ID}]`, ...args);
+  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // CONFIGURATION
   // ═══════════════════════════════════════════════════════════════════════════
 
   const CONFIG = {
-    // Max accept clicks per domain per session (prevents infinite loops)
     maxClicksPerDomain: 5,
-    // Debounce interval for MutationObserver (ms)
-    debounceMs: 150,
-    // Max time to keep retrying (ms)
-    maxRetryDuration: 15000,
-    // Retry interval (ms)
+    debounceMs: 200,
+    maxRetryDuration: 30000,      // Extended from 15s to 30s for slow CMPs
     retryInterval: 500,
-    // Max text length for a button to be considered valid
-    maxButtonTextLength: 50,
-    // Minimum banner size (px)
-    minBannerWidth: 200,
-    minBannerHeight: 40,
+    maxButtonTextLength: 60,
+    minBannerWidth: 150,
+    minBannerHeight: 30,
+    clickVerifyDelay: 600,        // Wait this long after click to verify dismissal
+    clickRetryAttempts: 3,        // Max click retries before CSS fallback
+    spaCheckInterval: 1000,       // How often to check for SPA navigation
+    observerReactivateDelay: 2000, // Delay before reactivating observer after SPA nav
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
   // CMP-SPECIFIC SELECTORS (Direct ID/class targeting for known platforms)
-  // These are the fastest and most reliable detection method.
   // ═══════════════════════════════════════════════════════════════════════════
 
   const CMP_ACCEPT_SELECTORS = [
@@ -38,9 +50,11 @@
     "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
     "#CybotCookiebotDialogBodyButtonAccept",
     "#CybotCookiebotDialogBodyLevelButtonAccept",
+    "a#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
     // Didomi
     "#didomi-notice-agree-button",
     "[data-testid='didomi-notice-agree-button']",
+    ".didomi-continue-without-agreeing",
     // Quantcast Choice
     ".qc-cmp2-summary-buttons button[mode='primary']",
     "[data-tracking-opt-in-accept]",
@@ -48,9 +62,11 @@
     // TrustArc (Truste)
     "#truste-consent-button",
     ".trustarc-agree-btn",
+    ".pdynamicbutton .call",
     // Usercentrics
     "#uc-btn-accept-banner",
     "[data-testid='uc-accept-all-button']",
+    "button[data-testid='uc-accept-all-button']",
     // CookieYes
     ".cky-btn-accept",
     "[data-cky-tag='accept-button']",
@@ -63,6 +79,7 @@
     // Borlabs Cookie
     "[data-cookie-accept-all]",
     "#BorlabsCookieBoxWrap .cookie-accept-all",
+    "a._brlbs-btn-accept-all",
     // Klaro
     ".klaro .cm-btn-accept",
     ".klaro .cm-btn-accept-all",
@@ -99,6 +116,7 @@
     // Sourcepoint (non-iframe)
     "button[title='Accept all']",
     "button[title='Accept All']",
+    "button[title='ACCEPT ALL']",
     // Cookie Script
     "#cookiescript_accept",
     "#cookiescript_acceptall",
@@ -125,7 +143,8 @@
     // Sirdata
     "#sd-cmp button.sd-cmp-3cRQ2",
     // Google Consent (FC)
-    "button[data-cookiedomain] + button",
+    ".fc-button.fc-cta-consent",
+    ".fc-cta-consent",
     // Google's own consent
     "[aria-label='Accept all']",
     "button[jsname='b3VHJd']",
@@ -140,14 +159,28 @@
     ".js-consent-banner-accept",
     // Reddit
     "._1tI68pPnLBjR1iHcL7vsee button",
-    // Medium
-    "[data-testid='close-button']",
-    // GitHub
-    "[data-analytics-event*='cookie'] button",
+    // Orejime
+    ".orejime-Button--save",
+    // CookieHub
+    ".ch2-allow-all-btn",
+    "#ch2-dialog-actions .ch2-btn-primary",
+    // Cookieinfo.net
+    "#cookie-consent-accept",
+    // Piwik PRO
+    "[data-ppms-consent-accept-all]",
+    // Sharethis
+    ".st-cmp-accept-all",
+    // Optanon (legacy OneTrust)
+    ".optanon-allow-all",
+    "#optanon-allow-all",
+    // UniConsent
+    ".unic-consent .unic-btn-accept",
+    // Crownpeak
+    "#cpDivBtnAcceptAll",
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // CMP CONTAINER SELECTORS (to identify cookie banner containers)
+  // CMP CONTAINER SELECTORS
   // ═══════════════════════════════════════════════════════════════════════════
 
   const CMP_CONTAINER_SELECTORS = [
@@ -203,6 +236,9 @@
     "#privacy-banner",
     ".consent-banner",
     "#consent-banner",
+    ".ch2-container",
+    "#ch2-dialog",
+    ".orejime-Notice",
     "[class*='cookie-banner']",
     "[class*='cookie-consent']",
     "[class*='cookieBanner']",
@@ -215,16 +251,87 @@
     "[id*='cookieConsent']",
     "[id*='consent-banner']",
     "[id*='gdpr']",
-    "[aria-label*='cookie']",
-    "[aria-label*='consent']",
-    "[role='dialog'][aria-label*='cookie']",
-    "[role='dialog'][aria-label*='privacy']",
+    "[aria-label*='cookie' i]",
+    "[aria-label*='consent' i]",
+    "[role='dialog'][aria-label*='cookie' i]",
+    "[role='dialog'][aria-label*='privacy' i]",
     "[role='alertdialog']",
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // CSS FALLBACK RULES (hide banners when clicks fail)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const CSS_HIDE_RULES = `
+    #onetrust-banner-sdk,
+    #onetrust-consent-sdk,
+    #CybotCookiebotDialog,
+    #CybotCookiebotDialogBody,
+    .CybotCookiebotDialogActive,
+    #didomi-host,
+    #didomi-popup,
+    .qc-cmp2-container,
+    #qcCmpUi,
+    #truste-consent-track,
+    #truste_overlay,
+    .cky-consent-container,
+    .osano-cm-dialog,
+    .osano-cm-window,
+    .cmplz-cookiebanner,
+    #BorlabsCookieBox,
+    #iubenda-cs-banner,
+    .t-consentPrompt,
+    #hs-eu-cookie-confirmation,
+    #cmpbox,
+    #cmpbox2,
+    #cookie-notice,
+    .cookie-notice-container,
+    #moove_gdpr_cookie_info_bar,
+    #cookiescript_injected,
+    #tarteaucitron,
+    #sd-cmp,
+    .fc-consent-root,
+    #consent-bump,
+    #sp-cc,
+    .evidon-consent-button,
+    #cookie-law-info-bar,
+    .cc-window,
+    .cc-banner,
+    #gdpr-cookie-message,
+    #cookie-popup,
+    .ch2-container,
+    #ch2-dialog,
+    .orejime-Notice {
+      display: none !important;
+      visibility: hidden !important;
+      opacity: 0 !important;
+      pointer-events: none !important;
+      height: 0 !important;
+      overflow: hidden !important;
+    }
+    /* Remove overlay/backdrop that blocks page interaction */
+    #onetrust-consent-sdk ~ div[class*='overlay'],
+    .cmpboxBGoverlay,
+    .cmpboxoverlay,
+    #truste_overlay,
+    .qc-cmp2-overlay,
+    .didomi-popup-backdrop,
+    .osano-cm-overlay,
+    .cc-overlay,
+    body.cmplz-blocked,
+    body.cookies-not-accepted,
+    body.cookie-consent-active {
+      overflow: auto !important;
+    }
+    body.cmplz-blocked,
+    body.cookies-not-accepted {
+      position: static !important;
+      overflow: auto !important;
+    }
+  `;
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // MULTILINGUAL ACCEPT KEYWORDS
-  // Organized by strength: strong phrases first, then generic words
   // ═══════════════════════════════════════════════════════════════════════════
 
   const ACCEPT_PHRASES_STRONG = [
@@ -233,14 +340,16 @@
     "agree to all", "i agree", "yes, i agree", "agree and continue",
     "i accept", "yes, i accept", "accept & continue", "accept and continue",
     "accept and close", "allow and close", "agree & close",
+    "accept recommended", "accept suggested",
     // French
     "accepter tout", "tout accepter", "accepter tous les cookies",
     "accepter tous", "j'accepte", "autoriser tout", "tout autoriser",
-    "accepter et continuer", "accepter & continuer",
+    "accepter et continuer", "accepter & continuer", "accepter et fermer",
     // German
     "alle akzeptieren", "alle cookies akzeptieren", "alles akzeptieren",
     "alle annehmen", "ich stimme zu", "akzeptieren und weiter",
     "alle zulassen", "zustimmen und weiter", "einverstanden",
+    "allen cookies zustimmen", "cookies akzeptieren",
     // Spanish
     "aceptar todo", "aceptar todas", "aceptar todas las cookies",
     "aceptar todos", "acepto", "estoy de acuerdo", "aceptar y continuar",
@@ -279,12 +388,14 @@
     "αποδοχή όλων", "αποδέχομαι όλα",
     // Turkish
     "tümünü kabul et", "hepsini kabul et", "tüm çerezleri kabul et",
+    "tüm çerezlere izin ver",
     // Russian
     "принять все", "принять все cookies", "согласен со всеми",
     // Ukrainian
     "прийняти всі", "прийняти все",
     // Japanese
     "すべて許可", "すべて受け入れる", "全て許可", "すべてのcookieを許可",
+    "すべて同意",
     // Chinese (Simplified)
     "全部接受", "接受所有", "接受所有cookie", "全部允许",
     // Chinese (Traditional)
@@ -381,116 +492,114 @@
     "manage options", "manage settings", "manage preferences",
     "cookie settings", "privacy settings", "do not sell",
     "opt out", "opt-out", "save preferences", "save settings",
-    "confirm choices", "confirm my choices",
+    "confirm choices", "confirm my choices", "save my choices",
     // French
-    "gérer", "paramètres", "personnaliser", "en savoir plus",
-    "refuser", "refuser tout", "politique de cookies",
-    "politique de confidentialité", "paramétrer",
+    "paramétrer", "paramètres", "personnaliser", "en savoir plus",
+    "refuser", "gérer", "plus d'informations", "politique de cookies",
     // German
-    "verwalten", "einstellungen", "anpassen", "mehr erfahren",
-    "ablehnen", "alle ablehnen", "cookie-einstellungen",
-    "datenschutz", "nur notwendige",
+    "einstellungen", "anpassen", "mehr erfahren", "ablehnen",
+    "verwalten", "nur notwendige", "nur erforderliche",
+    "cookie-einstellungen", "datenschutzerklärung",
     // Spanish
-    "gestionar", "configurar", "personalizar", "más información",
-    "rechazar", "rechazar todo", "solo necesarias",
-    "política de cookies", "configuración",
+    "configurar", "personalizar", "más información", "rechazar",
+    "gestionar", "solo necesarias", "configuración de cookies",
     // Italian
-    "gestisci", "impostazioni", "personalizza", "maggiori informazioni",
-    "rifiuta", "rifiuta tutto", "solo necessari",
-    // Portuguese
-    "gerenciar", "configurações", "personalizar", "saiba mais",
-    "recusar", "recusar tudo", "apenas necessários",
+    "impostazioni", "personalizza", "maggiori informazioni", "rifiuta",
+    "gestisci", "solo necessari",
     // Dutch
-    "beheren", "instellingen", "aanpassen", "meer informatie",
-    "weigeren", "alles weigeren",
-    // Social / external (all languages)
-    "facebook", "instagram", "twitter", "x.com", "linkedin",
-    "youtube", "tiktok", "pinterest", "reddit",
-    "subscribe", "sign in", "sign up", "log in", "register",
-    "download", "install",
+    "instellingen", "aanpassen", "meer informatie", "weigeren",
+    "beheren", "alleen noodzakelijk",
+    // Polish
+    "ustawienia", "dostosuj", "więcej informacji", "odrzuć",
+    "zarządzaj", "tylko niezbędne",
+    // Turkish
+    "ayarlar", "özelleştir", "daha fazla bilgi", "reddet",
+    "yönet", "sadece gerekli",
+    // Russian
+    "настройки", "настроить", "подробнее", "отклонить",
+    "управлять", "только необходимые",
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // COOKIE CONTEXT KEYWORDS (identifies cookie/consent-related content)
+  // COOKIE CONTEXT KEYWORDS (text that indicates a cookie banner)
   // ═══════════════════════════════════════════════════════════════════════════
 
   const COOKIE_CONTEXT_KEYWORDS = [
     // English
-    "cookie", "cookies", "consent", "gdpr", "privacy", "tracking",
-    "advertising cookies", "manage privacy", "privacy preferences",
-    "data protection", "personal data", "third party", "third-party",
-    "analytics cookies", "functional cookies", "performance cookies",
+    "cookie", "cookies", "consent", "gdpr", "privacy", "data protection",
+    "personal data", "tracking", "analytics", "advertising cookies",
+    "functional cookies", "performance cookies", "third party",
+    "third-party", "we use cookies", "this site uses cookies",
+    "this website uses cookies", "browsing experience",
     // French
     "cookies", "consentement", "confidentialité", "données personnelles",
-    "protection des données", "traceurs",
+    "nous utilisons des cookies", "ce site utilise des cookies",
     // German
-    "cookies", "einwilligung", "datenschutz", "privatsphäre",
-    "personenbezogene daten", "tracking",
+    "cookies", "einwilligung", "datenschutz", "personenbezogene daten",
+    "wir verwenden cookies", "diese website verwendet cookies",
+    "diese seite verwendet cookies",
     // Spanish
     "cookies", "consentimiento", "privacidad", "datos personales",
-    "protección de datos",
+    "utilizamos cookies", "este sitio utiliza cookies",
     // Italian
     "cookie", "consenso", "privacy", "dati personali",
-    "protezione dei dati",
+    "utilizziamo i cookie", "questo sito utilizza cookie",
     // Portuguese
     "cookies", "consentimento", "privacidade", "dados pessoais",
+    "utilizamos cookies", "este site utiliza cookies",
     // Dutch
     "cookies", "toestemming", "privacy", "persoonsgegevens",
+    "wij gebruiken cookies", "deze website gebruikt cookies",
     // Polish
-    "ciasteczka", "zgoda", "prywatność", "dane osobowe",
+    "ciasteczka", "pliki cookie", "zgoda", "prywatność",
+    "dane osobowe", "używamy plików cookie",
     // Swedish
-    "kakor", "samtycke", "integritet", "personuppgifter",
-    // Danish / Norwegian
-    "informationskapsler", "samtykke", "personvern", "personoplysninger",
+    "kakor", "cookies", "samtycke", "integritet",
+    // Danish
+    "cookies", "samtykke", "privatlivspolitik",
+    // Norwegian
+    "informasjonskapsler", "samtykke", "personvern",
     // Finnish
-    "evästeet", "eväste", "suostumus", "yksityisyys", "tietosuoja",
+    "evästeet", "suostumus", "tietosuoja",
     // Czech
-    "soubory cookie", "souhlas", "soukromí", "osobní údaje",
-    // Romanian
-    "module cookie", "consimțământ", "confidențialitate",
+    "soubory cookie", "souhlas", "ochrana osobních údajů",
     // Hungarian
-    "sütik", "süti", "hozzájárulás", "adatvédelem",
-    // Greek
-    "cookies", "συγκατάθεση", "απόρρητο", "προσωπικά δεδομένα",
+    "sütik", "cookie-k", "hozzájárulás", "adatvédelem",
     // Turkish
-    "çerez", "cerez", "çerezler", "cerezler", "onay", "gizlilik",
-    "kişisel veri", "veri koruma",
+    "çerez", "çerezler", "cerez", "cerezler", "onay", "gizlilik",
+    "kişisel veri",
     // Russian
-    "файлы cookie", "куки", "согласие", "конфиденциальность",
+    "куки", "файлы cookie", "согласие", "конфиденциальность",
     "персональные данные",
     // Ukrainian
     "файли cookie", "згода", "конфіденційність",
     // Japanese
-    "クッキー", "cookie", "同意", "プライバシー", "個人情報",
+    "クッキー", "cookie", "同意", "プライバシー",
     // Chinese
-    "cookie", "隐私", "个人信息", "数据保护", "同意",
+    "cookie", "隐私", "同意", "个人数据", "数据保护",
     // Korean
-    "쿠키", "동의", "개인정보", "개인 정보",
+    "쿠키", "동의", "개인정보",
     // Arabic
-    "ملفات تعريف الارتباط", "كوكيز", "موافقة", "خصوصية",
+    "ملفات تعريف الارتباط", "كوكيز", "الخصوصية", "موافقة",
     // Thai
     "คุกกี้", "ความยินยอม", "ความเป็นส่วนตัว",
     // Vietnamese
-    "cookie", "đồng ý", "quyền riêng tư",
+    "cookie", "quyền riêng tư", "đồng ý",
     // Indonesian
-    "cookie", "persetujuan", "privasi",
+    "cookie", "privasi", "persetujuan",
     // Hindi
-    "कुकी", "सहमति", "गोपनीयता",
-    // Generic
-    "rgpd", "lgpd", "ccpa", "eprivacy", "dsgvo",
+    "कुकी", "गोपनीयता", "सहमति",
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // ANTI-FALSE-POSITIVE KEYWORDS (robot checks, captchas, etc.)
+  // AVOID KEYWORDS (pages where we should NOT act)
   // ═══════════════════════════════════════════════════════════════════════════
 
   const AVOID_KEYWORDS = [
-    "not a robot", "are you a robot", "robot check", "captcha",
-    "security check", "verify you are human", "verify you're human",
-    "checking your browser", "ddos-protection", "cloudflare",
-    "recaptcha", "hcaptcha", "turnstile", "bot detection",
-    "please verify", "human verification", "access denied",
-    "just a moment", "enable javascript",
+    "captcha", "recaptcha", "i'm not a robot", "i am not a robot",
+    "verify you are human", "prove you're human", "human verification",
+    "robot verification", "security check", "access denied",
+    "please verify", "challenge", "hcaptcha",
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -513,31 +622,38 @@
 
   function isVisible(el) {
     if (!el) return false;
-    // Check if element is in the DOM
     if (!el.isConnected) return false;
-    const style = window.getComputedStyle(el);
-    if (
-      style.display === "none" ||
-      style.visibility === "hidden" ||
-      style.opacity === "0" ||
-      (style.clip === "rect(0px, 0px, 0px, 0px)" && style.position === "absolute")
-    ) {
+    try {
+      const style = window.getComputedStyle(el);
+      if (
+        style.display === "none" ||
+        style.visibility === "hidden" ||
+        style.opacity === "0" ||
+        (style.clip === "rect(0px, 0px, 0px, 0px)" && style.position === "absolute")
+      ) {
+        return false;
+      }
+      const rect = el.getBoundingClientRect();
+      return rect.width > 0 && rect.height > 0;
+    } catch (e) {
       return false;
     }
-    const rect = el.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0;
   }
 
   function isInViewport(el) {
-    const rect = el.getBoundingClientRect();
-    const vw = window.innerWidth || document.documentElement.clientWidth;
-    const vh = window.innerHeight || document.documentElement.clientHeight;
-    return (
-      rect.top < vh &&
-      rect.bottom > 0 &&
-      rect.left < vw &&
-      rect.right > 0
-    );
+    try {
+      const rect = el.getBoundingClientRect();
+      const vw = window.innerWidth || document.documentElement.clientWidth;
+      const vh = window.innerHeight || document.documentElement.clientHeight;
+      return (
+        rect.top < vh + 100 &&
+        rect.bottom > -100 &&
+        rect.left < vw + 100 &&
+        rect.right > -100
+      );
+    } catch (e) {
+      return false;
+    }
   }
 
   function debounce(fn, delay) {
@@ -555,64 +671,68 @@
   // SHADOW DOM TRAVERSAL
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function querySelectorAllDeep(selector, root = document) {
+  function querySelectorAllDeep(selector, root = document, maxDepth = 3) {
     const results = [];
+    if (maxDepth <= 0) return results;
 
-    // Query in the current root
     try {
       const found = root.querySelectorAll(selector);
       found.forEach((el) => results.push(el));
-    } catch (e) {
-      // Invalid selector in this context, skip
-    }
+    } catch (e) { /* invalid selector */ }
 
-    // Traverse shadow DOMs
-    const allElements = root.querySelectorAll("*");
-    for (const el of allElements) {
-      if (el.shadowRoot) {
-        const shadowResults = querySelectorAllDeep(selector, el.shadowRoot);
-        shadowResults.forEach((r) => results.push(r));
+    // Traverse shadow DOMs (with depth limit to prevent infinite recursion)
+    try {
+      const allElements = root.querySelectorAll("*");
+      for (const el of allElements) {
+        if (el.shadowRoot) {
+          const shadowResults = querySelectorAllDeep(selector, el.shadowRoot, maxDepth - 1);
+          shadowResults.forEach((r) => results.push(r));
+        }
       }
-    }
+    } catch (e) { /* skip */ }
 
     return results;
   }
 
-  function querySelectorDeep(selector, root = document) {
-    // Try in current root first
+  function querySelectorDeep(selector, root = document, maxDepth = 3) {
+    if (maxDepth <= 0) return null;
+
     try {
       const found = root.querySelector(selector);
       if (found) return found;
-    } catch (e) {
-      // skip
-    }
+    } catch (e) { /* skip */ }
 
-    // Traverse shadow DOMs
-    const allElements = root.querySelectorAll("*");
-    for (const el of allElements) {
-      if (el.shadowRoot) {
-        const found = querySelectorDeep(selector, el.shadowRoot);
-        if (found) return found;
+    try {
+      const allElements = root.querySelectorAll("*");
+      for (const el of allElements) {
+        if (el.shadowRoot) {
+          const found = querySelectorDeep(selector, el.shadowRoot, maxDepth - 1);
+          if (found) return found;
+        }
       }
-    }
+    } catch (e) { /* skip */ }
 
     return null;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // PER-DOMAIN STATE MANAGEMENT (using chrome.storage.local for reliability)
+  // STATE MANAGEMENT
   // ═══════════════════════════════════════════════════════════════════════════
 
   const STATE_KEY = "__IDGAC__" + window.location.hostname;
   let clickCount = 0;
   let hasBeenHandled = false;
+  let cssFallbackInjected = false;
+  let lastUrl = window.location.href;
+  let extensionEnabled = true;
+  let siteBlocked = false;
 
   function markHandled() {
     clickCount++;
     if (clickCount >= CONFIG.maxClicksPerDomain) {
       hasBeenHandled = true;
     }
-    // Persist to chrome.storage.local for cross-session reliability
+    // Persist state
     try {
       if (chrome && chrome.storage && chrome.storage.local) {
         chrome.storage.local.set({
@@ -620,20 +740,25 @@
         });
       }
     } catch (e) {
-      // Fallback to localStorage
       try {
         localStorage.setItem(STATE_KEY, JSON.stringify({ count: clickCount, ts: Date.now() }));
       } catch (e2) { /* ignore */ }
     }
+    // Notify background script
+    notifyBackground("bannerDismissed", { hostname: window.location.hostname });
   }
 
   function loadState(callback) {
     try {
       if (chrome && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.get(STATE_KEY, (data) => {
+        chrome.storage.local.get([STATE_KEY, "blocklist", "debug"], (data) => {
+          if (chrome.runtime.lastError) {
+            callback();
+            return;
+          }
           if (data && data[STATE_KEY]) {
             const stored = data[STATE_KEY];
-            // Reset if older than 24 hours (banners may reappear)
+            // Reset if older than 24 hours
             if (stored.ts && Date.now() - stored.ts > 86400000) {
               clickCount = 0;
             } else {
@@ -642,6 +767,19 @@
             if (clickCount >= CONFIG.maxClicksPerDomain) {
               hasBeenHandled = true;
             }
+          }
+          // Check blocklist
+          if (data && data.blocklist) {
+            const hostname = window.location.hostname;
+            if (Array.isArray(data.blocklist) && data.blocklist.some(
+              (pattern) => hostname === pattern || hostname.endsWith("." + pattern)
+            )) {
+              siteBlocked = true;
+            }
+          }
+          // Debug mode
+          if (data && data.debug) {
+            debugMode = true;
           }
           callback();
         });
@@ -668,16 +806,58 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // TARGET VALIDATION (prevent clicking bad things)
+  // BACKGROUND COMMUNICATION
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function notifyBackground(action, data = {}) {
+    try {
+      if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage({ action, ...data }, () => {
+          // Ignore errors (background may not be listening)
+          if (chrome.runtime.lastError) { /* expected */ }
+        });
+      }
+    } catch (e) { /* not in extension context */ }
+  }
+
+  // Listen for messages from background
+  try {
+    if (chrome && chrome.runtime && chrome.runtime.onMessage) {
+      chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+        if (msg.action === "reScan") {
+          // Background requested a re-scan (e.g., after SPA navigation)
+          hasBeenHandled = false;
+          clickCount = 0;
+          cssFallbackInjected = false;
+          scheduleRetries();
+          startObserver();
+          sendResponse({ ok: true });
+        } else if (msg.action === "getStatus") {
+          sendResponse({
+            handled: hasBeenHandled,
+            clicks: clickCount,
+            url: window.location.href,
+          });
+        } else if (msg.action === "toggleSite") {
+          siteBlocked = msg.blocked;
+          if (siteBlocked && cssFallbackInjected) {
+            removeCssFallback();
+          }
+          sendResponse({ ok: true });
+        }
+        return true; // Keep channel open for async response
+      });
+    }
+  } catch (e) { /* not in extension context */ }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TARGET VALIDATION
   // ═══════════════════════════════════════════════════════════════════════════
 
   function isBadTarget(el, text) {
     const t = normalizeText(text);
 
-    // Check negative keywords
     if (containsAny(t, NEGATIVE_KEYWORDS)) return true;
-
-    // Skip very long text (likely a paragraph, not a button)
     if (t.length > CONFIG.maxButtonTextLength) return true;
 
     const tag = (el.tagName || "").toUpperCase();
@@ -706,7 +886,7 @@
     const policyPaths = [
       "privacy", "cookie-policy", "cookies-policy", "/cookies",
       "cookie_settings", "cookiepreferences", "cookie-preferences",
-      "/policy", "/terms", "/legal",
+      "/policy", "/terms", "/legal", "/datenschutz", "/impressum",
     ];
     if (href && policyPaths.some((p) => lowerHref.includes(p))) {
       return true;
@@ -724,117 +904,116 @@
       ) {
         return false; // Looks like a JS button
       }
-      // Real navigation link - bad target
-      return true;
+      return true; // Real navigation link
     }
 
     return false;
   }
 
   function isLikelyRobotPage() {
-    const bodyText = normalizeText(
-      (document.body && document.body.innerText) || ""
-    );
-    return containsAny(bodyText, AVOID_KEYWORDS);
+    try {
+      const bodyText = normalizeText(
+        (document.body && document.body.innerText) || ""
+      ).substring(0, 3000); // Only check first 3000 chars for performance
+      return containsAny(bodyText, AVOID_KEYWORDS);
+    } catch (e) {
+      return false;
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STRATEGY 1: CMP-SPECIFIC SELECTORS (fastest, most reliable)
+  // STRATEGY 1: CMP-SPECIFIC SELECTORS
   // ═══════════════════════════════════════════════════════════════════════════
 
   function tryCMPSelectors() {
     for (const selector of CMP_ACCEPT_SELECTORS) {
-      const el = querySelectorDeep(selector);
-      if (el && isVisible(el)) {
-        const text = normalizeText(el.innerText || el.value || el.textContent || "");
-        // Verify it's not a negative button that happens to match a selector
-        if (!containsAny(text, ["reject", "decline", "deny", "refuse", "ablehnen", "refuser", "rechazar", "rifiuta", "weigeren"])) {
-          return el;
+      try {
+        const el = querySelectorDeep(selector);
+        if (el && isVisible(el)) {
+          const text = normalizeText(el.innerText || el.value || el.textContent || "");
+          // Verify it's not a negative button
+          const rejectWords = [
+            "reject", "decline", "deny", "refuse", "ablehnen", "refuser",
+            "rechazar", "rifiuta", "weigeren", "odrzuć", "reddet", "отклонить",
+          ];
+          if (!containsAny(text, rejectWords)) {
+            return el;
+          }
         }
-      }
+      } catch (e) { /* selector may be invalid in context */ }
     }
     return null;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STRATEGY 2: CONTAINER-BASED DETECTION (find banner, then find button)
+  // STRATEGY 2: CONTAINER-BASED DETECTION
   // ═══════════════════════════════════════════════════════════════════════════
 
   function findCookieContainers() {
     const containers = [];
     const seen = new WeakSet();
 
-    // First, try known CMP container selectors
+    // Known CMP containers
     for (const selector of CMP_CONTAINER_SELECTORS) {
-      const elements = querySelectorAllDeep(selector);
-      for (const el of elements) {
-        if (seen.has(el) || !isVisible(el)) continue;
-        seen.add(el);
-        containers.push(el);
-      }
+      try {
+        const elements = querySelectorAllDeep(selector);
+        for (const el of elements) {
+          if (seen.has(el) || !isVisible(el)) continue;
+          seen.add(el);
+          containers.push(el);
+        }
+      } catch (e) { /* skip invalid selector */ }
     }
 
-    // Then, heuristic scan for unknown banners
-    const candidates = document.querySelectorAll(
-      "div, section, aside, dialog, form, [role='dialog'], [role='alertdialog'], [role='banner']"
-    );
-
-    const vw = window.innerWidth || document.documentElement.clientWidth || 1024;
-    const vh = window.innerHeight || document.documentElement.clientHeight || 768;
-
-    for (const el of candidates) {
-      if (seen.has(el) || !isVisible(el)) continue;
-
-      const rect = el.getBoundingClientRect();
-      // Skip too small
-      if (rect.width < CONFIG.minBannerWidth || rect.height < CONFIG.minBannerHeight) continue;
-      // Skip full-page containers
-      if (rect.width * rect.height > vw * vh * 0.85) continue;
-
-      // Check if it looks like a cookie banner
-      const idClass = normalizeText((el.id || "") + " " + (el.className || ""));
-      const hasCookieHint = containsAny(idClass, [
-        "cookie", "consent", "gdpr", "privacy", "banner", "notice",
-        "compliance", "dsgvo", "rgpd", "ccpa", "eprivacy",
-        // Multilingual class/id hints
-        "cerez", "çerez", "datenschutz", "consentement", "confidentialit",
-        "privacidad", "consenso", "toestemming", "ciasteczk",
-        "kakor", "samtycke", "eväste", "souhlas", "süti",
-        "gizlilik", "куки", "согласие",
-        "クッキー", "쿠키", "คุกกี้", "كوكيز", "कुकी",
-      ]);
-
-      const innerText = normalizeText(el.innerText || "");
-      const mentionsCookies = containsAny(innerText, COOKIE_CONTEXT_KEYWORDS);
-      const looksLikeRobot = containsAny(innerText, AVOID_KEYWORDS);
-
-      if (!hasCookieHint && !mentionsCookies) continue;
-      if (looksLikeRobot) continue;
-
-      // Check it has a reasonable z-index or fixed/sticky position
-      const style = window.getComputedStyle(el);
-      const position = style.position;
-      const zIndex = parseInt(style.zIndex) || 0;
-      const isOverlay = position === "fixed" || position === "sticky" || zIndex > 100;
-      const isBottomBar = rect.bottom > vh * 0.7 && rect.height < vh * 0.4;
-      const isTopBar = rect.top < vh * 0.3 && rect.height < vh * 0.4;
-      const isCenterModal = (
-        rect.top > vh * 0.1 && rect.bottom < vh * 0.9 &&
-        rect.left > vw * 0.05 && rect.right < vw * 0.95
+    // Heuristic scan for unknown banners
+    try {
+      const candidates = document.querySelectorAll(
+        "div, section, aside, dialog, form, [role='dialog'], [role='alertdialog'], [role='banner']"
       );
 
-      // Score the container
-      let score = 0;
-      if (hasCookieHint) score += 50;
-      if (mentionsCookies) score += 30;
-      if (isOverlay) score += 40;
-      if (isBottomBar || isTopBar) score += 20;
-      if (isCenterModal) score += 30;
-      score += Math.min(rect.width * rect.height / 1000, 100);
+      const vw = window.innerWidth || document.documentElement.clientWidth || 1024;
+      const vh = window.innerHeight || document.documentElement.clientHeight || 768;
 
-      seen.add(el);
-      containers.push(el);
-    }
+      for (const el of candidates) {
+        if (seen.has(el) || !isVisible(el)) continue;
+
+        const rect = el.getBoundingClientRect();
+        if (rect.width < CONFIG.minBannerWidth || rect.height < CONFIG.minBannerHeight) continue;
+        if (rect.width * rect.height > vw * vh * 0.85) continue;
+
+        const idClass = normalizeText((el.id || "") + " " + (el.className || "").toString());
+        const hasCookieHint = containsAny(idClass, [
+          "cookie", "consent", "gdpr", "privacy", "banner", "notice",
+          "compliance", "dsgvo", "rgpd", "ccpa", "eprivacy",
+          "cerez", "çerez", "datenschutz", "consentement", "confidentialit",
+          "privacidad", "consenso", "toestemming", "ciasteczk",
+          "kakor", "samtycke", "eväste", "souhlas", "süti",
+          "gizlilik", "куки", "согласие",
+          "クッキー", "쿠키", "คุกกี้", "كوكيز", "कुकी",
+        ]);
+
+        const innerText = normalizeText((el.innerText || "").substring(0, 2000));
+        const mentionsCookies = containsAny(innerText, COOKIE_CONTEXT_KEYWORDS);
+        const looksLikeRobot = containsAny(innerText, AVOID_KEYWORDS);
+
+        if (!hasCookieHint && !mentionsCookies) continue;
+        if (looksLikeRobot) continue;
+
+        // Check positioning
+        const style = window.getComputedStyle(el);
+        const position = style.position;
+        const zIndex = parseInt(style.zIndex) || 0;
+        const isOverlay = position === "fixed" || position === "sticky" || zIndex > 100;
+        const isBottomBar = rect.bottom > vh * 0.7 && rect.height < vh * 0.4;
+        const isTopBar = rect.top < vh * 0.3 && rect.height < vh * 0.4;
+
+        // Only add if it looks like an overlay/banner (not inline content)
+        if (hasCookieHint || isOverlay || isBottomBar || isTopBar) {
+          seen.add(el);
+          containers.push(el);
+        }
+      }
+    } catch (e) { /* skip heuristic scan on error */ }
 
     return containers;
   }
@@ -848,27 +1027,29 @@
       "a",
       "span[onclick]",
       "div[onclick]",
+      "div[role='button']",
       "[tabindex='0']",
     ];
 
     const clickables = [];
 
     for (const sel of clickableSelectors) {
-      let elements;
-      // Check shadow DOM within container
-      if (container.shadowRoot) {
-        elements = container.shadowRoot.querySelectorAll(sel);
-      } else {
-        elements = container.querySelectorAll(sel);
-      }
+      try {
+        let elements;
+        if (container.shadowRoot) {
+          elements = container.shadowRoot.querySelectorAll(sel);
+        } else {
+          elements = container.querySelectorAll(sel);
+        }
 
-      for (const el of elements) {
-        if (!isVisible(el)) continue;
-        const rawText = el.innerText || el.value || el.textContent || "";
-        const text = normalizeText(rawText);
-        if (!text || text.length > CONFIG.maxButtonTextLength) continue;
-        clickables.push({ el, text });
-      }
+        for (const el of elements) {
+          if (!isVisible(el)) continue;
+          const rawText = el.innerText || el.value || el.textContent || "";
+          const text = normalizeText(rawText);
+          if (!text || text.length > CONFIG.maxButtonTextLength) continue;
+          clickables.push({ el, text });
+        }
+      } catch (e) { /* skip */ }
     }
 
     if (!clickables.length) return null;
@@ -881,22 +1062,19 @@
 
       let strength = 0;
 
-      // Strong match (explicit "accept all" type phrases)
       if (containsAny(text, ACCEPT_PHRASES_STRONG)) {
         strength = 10;
-      }
-      // Exact match on generic phrases
-      else if (matchesExact(text, ACCEPT_PHRASES_GENERIC)) {
+      } else if (matchesExact(text, ACCEPT_PHRASES_GENERIC)) {
         strength = 7;
-      }
-      // Partial match on generic phrases
-      else if (containsAny(text, ACCEPT_PHRASES_GENERIC)) {
-        // Additional filtering for generic matches
+      } else if (containsAny(text, ACCEPT_PHRASES_GENERIC)) {
+        // Filter out false positives for generic matches
         if (
           text.includes("article") || text.includes("section") ||
           text.includes("home") || text.includes("subscribe") ||
           text.includes("sign") || text.includes("log") ||
-          text.includes("register") || text.includes("download")
+          text.includes("register") || text.includes("download") ||
+          text.includes("newsletter") || text.includes("shop") ||
+          text.includes("buy") || text.includes("cart")
         ) {
           continue;
         }
@@ -909,20 +1087,24 @@
       const area = rect.width * rect.height;
       const tag = (el.tagName || "").toUpperCase();
 
-      // Prefer real buttons over anchors
       let typeBonus = 0;
       if (tag === "BUTTON" || tag === "INPUT") typeBonus = 3;
       else if (el.getAttribute("role") === "button") typeBonus = 2;
       else if (tag === "A") typeBonus = 0;
       else typeBonus = 1;
 
-      // Prefer elements with prominent styling (larger, colored backgrounds)
-      const style = window.getComputedStyle(el);
+      // Prefer elements with prominent styling
       let styleBonus = 0;
-      const bgColor = style.backgroundColor;
-      if (bgColor && bgColor !== "rgba(0, 0, 0, 0)" && bgColor !== "transparent") {
-        styleBonus += 2;
-      }
+      try {
+        const style = window.getComputedStyle(el);
+        const bgColor = style.backgroundColor;
+        if (bgColor && bgColor !== "rgba(0, 0, 0, 0)" && bgColor !== "transparent") {
+          styleBonus += 2;
+        }
+        // Primary/CTA buttons tend to be bolder
+        const fontWeight = parseInt(style.fontWeight) || 400;
+        if (fontWeight >= 600) styleBonus += 1;
+      } catch (e) { /* skip */ }
 
       candidates.push({
         el,
@@ -931,8 +1113,6 @@
     }
 
     if (!candidates.length) return null;
-
-    // Sort by score descending
     candidates.sort((a, b) => b.score - a.score);
     return candidates[0].el;
   }
@@ -947,7 +1127,6 @@
       "button[aria-label*='agree' i]",
       "button[aria-label*='allow' i]",
       "button[aria-label*='consent' i]",
-      "button[aria-label*='Accept' i]",
       "[role='button'][aria-label*='accept' i]",
       "[role='button'][aria-label*='agree' i]",
       "button[data-action='accept']",
@@ -956,6 +1135,9 @@
       "button[data-cookieconsent='accept']",
       "a[data-action='accept']",
       "a[data-consent='accept']",
+      "[data-cy='cookie-accept']",
+      "[data-testid*='accept']",
+      "[data-testid*='agree']",
     ];
 
     for (const selector of ariaSelectors) {
@@ -963,70 +1145,18 @@
         const el = querySelectorDeep(selector);
         if (el && isVisible(el)) {
           const text = normalizeText(el.innerText || el.value || el.getAttribute("aria-label") || "");
-          if (!containsAny(text, NEGATIVE_KEYWORDS.slice(0, 30))) {
+          if (!containsAny(text, NEGATIVE_KEYWORDS.slice(0, 40))) {
             return el;
           }
         }
-      } catch (e) {
-        // Some selectors may not be valid in all contexts
-      }
+      } catch (e) { /* skip */ }
     }
 
     return null;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STRATEGY 4: FULL-PAGE SCAN (last resort for unusual banners)
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  function tryFullPageScan() {
-    // Only use this if the page clearly has cookie-related content
-    const bodyText = normalizeText((document.body && document.body.innerText) || "");
-    if (!containsAny(bodyText, COOKIE_CONTEXT_KEYWORDS)) return null;
-    if (isLikelyRobotPage()) return null;
-
-    const selectors = ["button", "[role='button']", "input[type='button']", "input[type='submit']"];
-    const candidates = [];
-
-    const vh = window.innerHeight || document.documentElement.clientHeight || 768;
-
-    for (const sel of selectors) {
-      const elements = querySelectorAllDeep(sel);
-      for (const el of elements) {
-        if (!isVisible(el) || !isInViewport(el)) continue;
-
-        const rawText = el.innerText || el.value || el.textContent || "";
-        const text = normalizeText(rawText);
-        if (!text || text.length > 30) continue;
-
-        if (isBadTarget(el, text)) continue;
-
-        // Only strong accept phrases for full-page scan (to avoid false positives)
-        if (!containsAny(text, ACCEPT_PHRASES_STRONG)) continue;
-
-        const rect = el.getBoundingClientRect();
-        const area = rect.width * rect.height;
-
-        // Prefer buttons in top/bottom bands (where banners typically appear)
-        const centerY = rect.top + rect.height / 2;
-        let positionBonus = 0;
-        if (centerY > vh * 0.7 || centerY < vh * 0.3) positionBonus = 20;
-
-        candidates.push({
-          el,
-          score: area + positionBonus * 100,
-        });
-      }
-    }
-
-    if (!candidates.length) return null;
-    candidates.sort((a, b) => b.score - a.score);
-    return candidates[0].el;
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // STRATEGY 5: OVERLAY/BACKDROP DETECTION
-  // Some banners use a full-screen overlay; find the accept button within
+  // STRATEGY 4: OVERLAY/BACKDROP DETECTION
   // ═══════════════════════════════════════════════════════════════════════════
 
   function tryOverlayDetection() {
@@ -1039,77 +1169,280 @@
     ];
 
     for (const sel of overlaySelectors) {
-      const overlays = document.querySelectorAll(sel);
-      for (const overlay of overlays) {
-        if (!isVisible(overlay)) continue;
+      try {
+        const overlays = document.querySelectorAll(sel);
+        for (const overlay of overlays) {
+          if (!isVisible(overlay)) continue;
 
-        const style = window.getComputedStyle(overlay);
-        const rect = overlay.getBoundingClientRect();
-        const vw = window.innerWidth || 1024;
-        const vh = window.innerHeight || 768;
+          const style = window.getComputedStyle(overlay);
+          const rect = overlay.getBoundingClientRect();
+          const vw = window.innerWidth || 1024;
+          const vh = window.innerHeight || 768;
 
-        // Must be large (covering most of viewport)
-        if (rect.width < vw * 0.8 || rect.height < vh * 0.8) continue;
-        // Must be fixed/absolute positioned
-        if (style.position !== "fixed" && style.position !== "absolute") continue;
+          if (rect.width < vw * 0.8 || rect.height < vh * 0.8) continue;
+          if (style.position !== "fixed" && style.position !== "absolute") continue;
 
-        // Check if it contains cookie-related text
-        const text = normalizeText(overlay.innerText || "");
-        if (!containsAny(text, COOKIE_CONTEXT_KEYWORDS)) continue;
-        if (containsAny(text, AVOID_KEYWORDS)) continue;
+          const text = normalizeText((overlay.innerText || "").substring(0, 2000));
+          if (!containsAny(text, COOKIE_CONTEXT_KEYWORDS)) continue;
+          if (containsAny(text, AVOID_KEYWORDS)) continue;
 
-        // Find accept button within
-        const btn = findAcceptButtonInContainer(overlay);
-        if (btn) return btn;
-      }
+          const btn = findAcceptButtonInContainer(overlay);
+          if (btn) return btn;
+        }
+      } catch (e) { /* skip */ }
     }
 
     return null;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STRATEGY 6: IFRAME-BASED CONSENT (some CMPs use iframes)
+  // STRATEGY 5: IFRAME-BASED CONSENT
   // ═══════════════════════════════════════════════════════════════════════════
 
   function tryIframeConsent() {
-    const iframes = document.querySelectorAll("iframe");
-    for (const iframe of iframes) {
-      // Check if iframe src suggests it's a consent frame
-      const src = (iframe.src || "").toLowerCase();
-      const consentHosts = [
-        "consent", "cookie", "gdpr", "privacy", "cmp",
-        "trustarc", "onetrust", "cookiebot", "quantcast",
-        "didomi", "sourcepoint",
-      ];
+    try {
+      const iframes = document.querySelectorAll("iframe");
+      for (const iframe of iframes) {
+        const src = (iframe.src || "").toLowerCase();
+        const consentHosts = [
+          "consent", "cookie", "gdpr", "privacy", "cmp",
+          "trustarc", "onetrust", "cookiebot", "quantcast",
+          "didomi", "sourcepoint", "consentmanager",
+        ];
 
-      if (!consentHosts.some((h) => src.includes(h))) continue;
+        if (!consentHosts.some((h) => src.includes(h))) continue;
 
-      try {
-        const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-        if (!iframeDoc) continue;
+        try {
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+          if (!iframeDoc) continue;
 
-        // Try CMP selectors within iframe
-        for (const selector of CMP_ACCEPT_SELECTORS) {
-          try {
-            const el = iframeDoc.querySelector(selector);
-            if (el && isVisible(el)) return el;
-          } catch (e) { /* cross-origin, skip */ }
-        }
-
-        // Try finding accept button generically
-        const buttons = iframeDoc.querySelectorAll("button, [role='button'], a");
-        for (const btn of buttons) {
-          const text = normalizeText(btn.innerText || btn.value || "");
-          if (containsAny(text, ACCEPT_PHRASES_STRONG) && !containsAny(text, NEGATIVE_KEYWORDS)) {
-            if (isVisible(btn)) return btn;
+          for (const selector of CMP_ACCEPT_SELECTORS) {
+            try {
+              const el = iframeDoc.querySelector(selector);
+              if (el && isVisible(el)) return el;
+            } catch (e) { /* cross-origin */ }
           }
-        }
-      } catch (e) {
-        // Cross-origin iframe, cannot access
+
+          const buttons = iframeDoc.querySelectorAll("button, [role='button'], a");
+          for (const btn of buttons) {
+            const text = normalizeText(btn.innerText || btn.value || "");
+            if (containsAny(text, ACCEPT_PHRASES_STRONG) && !containsAny(text, NEGATIVE_KEYWORDS)) {
+              if (isVisible(btn)) return btn;
+            }
+          }
+        } catch (e) { /* cross-origin iframe */ }
       }
-    }
+    } catch (e) { /* skip */ }
 
     return null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STRATEGY 6: FULL-PAGE SCAN (strict, last resort)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function tryFullPageScan() {
+    try {
+      const bodyText = normalizeText(
+        (document.body && document.body.innerText || "").substring(0, 5000)
+      );
+      if (!containsAny(bodyText, COOKIE_CONTEXT_KEYWORDS)) return null;
+      if (isLikelyRobotPage()) return null;
+
+      const selectors = ["button", "[role='button']", "input[type='button']", "input[type='submit']"];
+
+      const vh = window.innerHeight || document.documentElement.clientHeight || 768;
+      const candidates = [];
+
+      for (const sel of selectors) {
+        const elements = querySelectorAllDeep(sel);
+        for (const el of elements) {
+          if (!isVisible(el) || !isInViewport(el)) continue;
+
+          const rawText = el.innerText || el.value || el.textContent || "";
+          const text = normalizeText(rawText);
+          if (!text || text.length > 30) continue;
+          if (isBadTarget(el, text)) continue;
+
+          // Only strong accept phrases for full-page scan
+          if (!containsAny(text, ACCEPT_PHRASES_STRONG)) continue;
+
+          const rect = el.getBoundingClientRect();
+          const area = rect.width * rect.height;
+          const centerY = rect.top + rect.height / 2;
+          let positionBonus = 0;
+          if (centerY > vh * 0.7 || centerY < vh * 0.3) positionBonus = 20;
+
+          candidates.push({
+            el,
+            score: area + positionBonus * 100,
+          });
+        }
+      }
+
+      if (!candidates.length) return null;
+      candidates.sort((a, b) => b.score - a.score);
+      return candidates[0].el;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CLICK ENGINE (with verification and retry)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  let pendingVerification = null;
+
+  function clickButton(el, strategy) {
+    try {
+      log(`Attempting click via ${strategy}:`, el.innerText || el.value);
+
+      // Method 1: Full mouse event sequence (most realistic)
+      const rect = el.getBoundingClientRect();
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+
+      const eventOptions = {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: x,
+        clientY: y,
+      };
+
+      el.dispatchEvent(new PointerEvent("pointerdown", eventOptions));
+      el.dispatchEvent(new MouseEvent("mousedown", eventOptions));
+      el.dispatchEvent(new PointerEvent("pointerup", eventOptions));
+      el.dispatchEvent(new MouseEvent("mouseup", eventOptions));
+      el.dispatchEvent(new MouseEvent("click", eventOptions));
+
+      // Method 2: Direct click as fallback
+      el.click();
+
+      // Method 3: Focus + Enter (for keyboard-accessible buttons)
+      try {
+        el.focus();
+        el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+        el.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
+      } catch (e) { /* skip */ }
+
+      markHandled();
+      log(`Click successful via ${strategy}`);
+
+      // Schedule verification
+      scheduleClickVerification(el, strategy);
+
+    } catch (e) {
+      logError(`Click failed via ${strategy}:`, e);
+      // Fallback: try simple click
+      try {
+        el.dispatchEvent(new Event("click", { bubbles: true }));
+        markHandled();
+        scheduleClickVerification(el, strategy);
+      } catch (e2) {
+        logError("All click methods failed");
+      }
+    }
+  }
+
+  function scheduleClickVerification(clickedEl, strategy) {
+    if (pendingVerification) clearTimeout(pendingVerification);
+
+    pendingVerification = setTimeout(() => {
+      pendingVerification = null;
+      verifyBannerDismissed(clickedEl, strategy);
+    }, CONFIG.clickVerifyDelay);
+  }
+
+  function verifyBannerDismissed(clickedEl, strategy) {
+    // Check if the banner is still visible
+    const bannerStillVisible = isBannerStillVisible();
+
+    if (bannerStillVisible) {
+      log("Banner still visible after click, attempting recovery...");
+
+      if (clickCount < CONFIG.clickRetryAttempts) {
+        // Try clicking again with a different approach
+        retryClick(strategy);
+      } else {
+        // All click attempts exhausted — inject CSS fallback
+        log("Click retries exhausted, injecting CSS fallback");
+        injectCssFallback();
+      }
+    } else {
+      log("Banner successfully dismissed");
+    }
+  }
+
+  function isBannerStillVisible() {
+    // Check if any known banner container is still visible
+    for (const selector of CMP_CONTAINER_SELECTORS.slice(0, 50)) {
+      try {
+        const el = document.querySelector(selector);
+        if (el && isVisible(el)) {
+          const rect = el.getBoundingClientRect();
+          if (rect.height > 50 && rect.width > 200) {
+            return true;
+          }
+        }
+      } catch (e) { /* skip */ }
+    }
+    return false;
+  }
+
+  function retryClick(previousStrategy) {
+    log("Retrying cookie acceptance...");
+    // Reset handled state to allow another attempt
+    hasBeenHandled = false;
+    // Try the full detection pipeline again
+    setTimeout(() => {
+      tryAcceptCookies();
+    }, 300);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // CSS FALLBACK (hide banners when clicks fail)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function injectCssFallback() {
+    if (cssFallbackInjected) return;
+    cssFallbackInjected = true;
+
+    try {
+      const style = document.createElement("style");
+      style.id = "idgac-css-fallback";
+      style.textContent = CSS_HIDE_RULES;
+      (document.head || document.documentElement).appendChild(style);
+
+      // Also remove body scroll locks that banners often apply
+      document.body.style.overflow = "";
+      document.body.style.position = "";
+      document.documentElement.style.overflow = "";
+
+      // Remove common body classes that lock scrolling
+      const lockClasses = [
+        "modal-open", "no-scroll", "overflow-hidden", "cookie-consent-active",
+        "cmplz-blocked", "cookies-not-accepted", "gdpr-active",
+      ];
+      for (const cls of lockClasses) {
+        document.body.classList.remove(cls);
+        document.documentElement.classList.remove(cls);
+      }
+
+      log("CSS fallback injected");
+      notifyBackground("cssFallbackUsed", { hostname: window.location.hostname });
+    } catch (e) {
+      logError("Failed to inject CSS fallback:", e);
+    }
+  }
+
+  function removeCssFallback() {
+    const style = document.getElementById("idgac-css-fallback");
+    if (style) {
+      style.remove();
+      cssFallbackInjected = false;
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1118,6 +1451,7 @@
 
   function tryAcceptCookies() {
     if (hasBeenHandled) return false;
+    if (siteBlocked) return false;
     if (isLikelyRobotPage()) return false;
 
     let button = null;
@@ -1160,7 +1494,7 @@
       return true;
     }
 
-    // Strategy 6: Full-page scan (last resort, strict matching only)
+    // Strategy 6: Full-page scan (last resort)
     button = tryFullPageScan();
     if (button) {
       clickButton(button, "full-page scan");
@@ -1170,33 +1504,66 @@
     return false;
   }
 
-  function clickButton(el, strategy) {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SPA NAVIGATION DETECTION
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function setupSPADetection() {
+    // Method 1: Listen for popstate (back/forward)
+    window.addEventListener("popstate", onSPANavigation);
+
+    // Method 2: Listen for hashchange
+    window.addEventListener("hashchange", onSPANavigation);
+
+    // Method 3: Patch History API to detect pushState/replaceState
     try {
-      // Simulate a real click sequence
-      el.focus();
-      el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-      el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
-      el.click();
+      const originalPushState = history.pushState;
+      const originalReplaceState = history.replaceState;
 
-      markHandled();
+      history.pushState = function (...args) {
+        originalPushState.apply(this, args);
+        setTimeout(onSPANavigation, 100);
+      };
 
-      // Log for debugging (only in dev)
-      // console.log(`[IDGAC] Clicked via ${strategy}:`, el.innerText || el.value);
-    } catch (e) {
-      // If click fails, try alternative
-      try {
-        el.dispatchEvent(new Event("click", { bubbles: true }));
-        markHandled();
-      } catch (e2) { /* give up on this element */ }
-    }
+      history.replaceState = function (...args) {
+        originalReplaceState.apply(this, args);
+        setTimeout(onSPANavigation, 100);
+      };
+    } catch (e) { /* skip if patching fails */ }
+
+    // Method 4: Periodic URL check as ultimate fallback
+    setInterval(() => {
+      if (window.location.href !== lastUrl) {
+        onSPANavigation();
+      }
+    }, CONFIG.spaCheckInterval);
+  }
+
+  function onSPANavigation() {
+    const newUrl = window.location.href;
+    if (newUrl === lastUrl) return;
+
+    log("SPA navigation detected:", lastUrl, "→", newUrl);
+    lastUrl = newUrl;
+
+    // Reset state for new page
+    hasBeenHandled = false;
+    cssFallbackInjected = false;
+    // Don't reset clickCount — keep per-domain limit
+
+    // Re-scan after a delay (give new page content time to render)
+    setTimeout(() => {
+      scheduleRetries();
+      startObserver();
+    }, CONFIG.observerReactivateDelay);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // SCHEDULING & OBSERVATION
   // ═══════════════════════════════════════════════════════════════════════════
 
+  let observer = null;
   let observerActive = false;
-  let retryTimer = null;
   let startTime = 0;
 
   function scheduleRetries() {
@@ -1205,12 +1572,12 @@
     // Immediate attempt
     if (tryAcceptCookies()) return;
 
-    // Progressive retries with increasing delays
-    const delays = [100, 300, 600, 1000, 1500, 2000, 3000, 5000, 8000, 12000];
+    // Progressive retries with increasing delays (extended to 30s)
+    const delays = [100, 250, 500, 800, 1200, 1800, 2500, 3500, 5000, 7500, 10000, 15000, 20000, 25000];
     for (const delay of delays) {
       if (delay > CONFIG.maxRetryDuration) break;
       setTimeout(() => {
-        if (hasBeenHandled) return;
+        if (hasBeenHandled || siteBlocked) return;
         tryAcceptCookies();
       }, delay);
     }
@@ -1223,38 +1590,38 @@
     const target = document.documentElement || document.body;
     if (!target) return;
 
-    // Debounced handler to prevent excessive processing
     const debouncedHandler = debounce(() => {
-      if (hasBeenHandled) {
-        observer.disconnect();
-        observerActive = false;
+      if (hasBeenHandled || siteBlocked) {
+        disconnectObserver();
         return;
       }
-      // Stop observing after max duration
       if (Date.now() - startTime > CONFIG.maxRetryDuration) {
-        observer.disconnect();
-        observerActive = false;
+        disconnectObserver();
         return;
       }
       tryAcceptCookies();
     }, CONFIG.debounceMs);
 
-    const observer = new MutationObserver(debouncedHandler);
+    observer = new MutationObserver(debouncedHandler);
 
     observer.observe(target, {
       childList: true,
       subtree: true,
-      attributes: true,
-      attributeFilter: ["style", "class", "hidden", "aria-hidden"],
+      // Only watch childList changes (not attributes) for performance
     });
 
-    // Auto-disconnect after max duration to save resources
+    // Auto-disconnect after max duration
     setTimeout(() => {
-      if (observerActive) {
-        observer.disconnect();
-        observerActive = false;
-      }
+      disconnectObserver();
     }, CONFIG.maxRetryDuration + 1000);
+  }
+
+  function disconnectObserver() {
+    if (observer) {
+      observer.disconnect();
+      observer = null;
+    }
+    observerActive = false;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1262,31 +1629,47 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   function init() {
-    // Check if extension is enabled
     try {
       if (chrome && chrome.storage && chrome.storage.sync) {
         chrome.storage.sync.get({ enabled: true }, (data) => {
-          if (!data.enabled) return;
-          loadState(() => {
-            if (hasBeenHandled) return;
-            scheduleRetries();
-            startObserver();
-          });
+          if (chrome.runtime.lastError) {
+            // Extension context lost, still try to run
+            startEngine();
+            return;
+          }
+          if (!data.enabled) {
+            extensionEnabled = false;
+            return;
+          }
+          startEngine();
         });
         return;
       }
     } catch (e) {
-      // Not in extension context (testing), proceed anyway
+      // Not in extension context (testing)
     }
 
     // Fallback: run directly
+    startEngine();
+  }
+
+  function startEngine() {
     loadState(() => {
-      if (hasBeenHandled) return;
+      if (hasBeenHandled || siteBlocked) return;
       scheduleRetries();
       startObserver();
+      setupSPADetection();
     });
   }
 
-  // Start the extension
-  init();
+  // Start with global error boundary
+  try {
+    init();
+  } catch (e) {
+    logError("Fatal initialization error:", e);
+    // Even if init fails, try a basic scan after a delay
+    setTimeout(() => {
+      try { tryAcceptCookies(); } catch (e2) { /* give up */ }
+    }, 2000);
+  }
 })();
