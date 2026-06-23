@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "I Don't Give a Cookie",
-  "description": "Automatically accepts cookie consent banners on websites.",
-  "version": "0.1.1",
+  "description": "Automatically accepts cookie consent banners on virtually any website. Supports 30+ languages and all major Consent Management Platforms.",
+  "version": "1.0.0",
   "permissions": ["storage"],
   "icons": {
     "16": "icons/icon16.png",
