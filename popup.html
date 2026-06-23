@@ -4,39 +4,199 @@
     <meta charset="UTF-8" />
     <title>I Don't Give a Cookie</title>
     <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
       body {
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-          sans-serif;
-        padding: 10px;
-        min-width: 220px;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+        width: 300px;
+        padding: 16px;
+        background: #fafafa;
+        color: #333;
       }
-      h1 {
-        font-size: 14px;
-        margin: 0 0 8px 0;
-      }
-      label {
+
+      .header {
         display: flex;
         align-items: center;
-        gap: 8px;
-        font-size: 13px;
+        gap: 10px;
+        margin-bottom: 16px;
+        padding-bottom: 12px;
+        border-bottom: 1px solid #e0e0e0;
       }
-      small {
-        display: block;
-        margin-top: 8px;
+
+      .header img {
+        width: 32px;
+        height: 32px;
+      }
+
+      .header h1 {
+        font-size: 15px;
+        font-weight: 600;
+        color: #1a1a1a;
+      }
+
+      .header .version {
+        font-size: 11px;
+        color: #888;
+        margin-left: auto;
+      }
+
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 12px 0;
+      }
+
+      .toggle-row label {
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+      }
+
+      /* Toggle switch */
+      .switch {
+        position: relative;
+        width: 44px;
+        height: 24px;
+      }
+
+      .switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+      }
+
+      .slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #ccc;
+        transition: 0.3s;
+        border-radius: 24px;
+      }
+
+      .slider:before {
+        position: absolute;
+        content: "";
+        height: 18px;
+        width: 18px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        transition: 0.3s;
+        border-radius: 50%;
+      }
+
+      input:checked + .slider {
+        background-color: #4caf50;
+      }
+
+      input:checked + .slider:before {
+        transform: translateX(20px);
+      }
+
+      .stats {
+        margin-top: 12px;
+        padding: 10px 12px;
+        background: #fff;
+        border: 1px solid #e8e8e8;
+        border-radius: 8px;
+      }
+
+      .stats-title {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: #888;
+        margin-bottom: 6px;
+      }
+
+      .stats-value {
+        font-size: 22px;
+        font-weight: 700;
+        color: #4caf50;
+      }
+
+      .stats-label {
         font-size: 11px;
         color: #666;
+        margin-top: 2px;
+      }
+
+      .footer {
+        margin-top: 14px;
+        padding-top: 12px;
+        border-top: 1px solid #e0e0e0;
+        font-size: 11px;
+        color: #888;
+        line-height: 1.5;
+      }
+
+      .footer a {
+        color: #4caf50;
+        text-decoration: none;
+      }
+
+      .footer a:hover {
+        text-decoration: underline;
+      }
+
+      .status-indicator {
+        display: inline-block;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        margin-right: 6px;
+        background: #ccc;
+      }
+
+      .status-indicator.active {
+        background: #4caf50;
+      }
+
+      .status-indicator.inactive {
+        background: #f44336;
       }
     </style>
   </head>
   <body>
-    <h1>I Don't Give a Cookie</h1>
-    <label>
-      <input type="checkbox" id="enabled" />
-      Auto-accept cookie popups
-    </label>
-    <small>
-      If a site misbehaves, disable this and reload the page.
-    </small>
+    <div class="header">
+      <img src="icons/icon48.png" alt="Cookie icon" />
+      <h1>I Don't Give a Cookie</h1>
+      <span class="version">v1.0.0</span>
+    </div>
+
+    <div class="toggle-row">
+      <label for="enabled">
+        <span class="status-indicator" id="statusDot"></span>
+        Auto-accept cookies
+      </label>
+      <div class="switch">
+        <input type="checkbox" id="enabled" />
+        <span class="slider"></span>
+      </div>
+    </div>
+
+    <div class="stats">
+      <div class="stats-title">Banners dismissed</div>
+      <div class="stats-value" id="totalCount">0</div>
+      <div class="stats-label">cookie popups handled automatically</div>
+    </div>
+
+    <div class="footer">
+      Supports 30+ languages and all major consent platforms.
+      If a site misbehaves, toggle off and reload.
+      <br /><br />
+      <a href="https://github.com/guizog-create/i-dont-give-a-cookie" target="_blank">GitHub</a>
+    </div>
 
     <script src="popup.js"></script>
   </body>
