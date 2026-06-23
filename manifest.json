@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "I Don't Give a Cookie",
   "description": "Automatically accepts cookie consent banners on virtually any website. Supports 30+ languages, all major CMPs, with click verification, CSS fallback, and SPA support.",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "permissions": [
     "storage",
     "tabs",

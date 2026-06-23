@@ -602,6 +602,14 @@
     "please verify", "challenge", "hcaptcha",
   ];
 
+  // Domains where ONLY CMP-specific selectors should be used (no heuristics)
+  // These are sites known to cause redirect loops with generic button detection
+  const CMP_ONLY_DOMAINS = [
+    "x.com", "twitter.com",       // Grok redirect issue
+    "nytimes.com",                // Cooking redirect issue
+    "vimeo.com",                  // Legal page loop
+  ];
+
   // ═══════════════════════════════════════════════════════════════════════════
   // UTILITY FUNCTIONS
   // ═══════════════════════════════════════════════════════════════════════════
@@ -826,12 +834,18 @@
       chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (msg.action === "reScan") {
           // Background requested a re-scan (e.g., after SPA navigation)
-          hasBeenHandled = false;
-          clickCount = 0;
-          cssFallbackInjected = false;
-          scheduleRetries();
-          startObserver();
-          sendResponse({ ok: true });
+          // GOLD CODE PRINCIPLE: Respect domain acceptance lock
+          // Only reset if we haven't already handled this domain
+          if (clickCount > 0) {
+            log("reScan requested but domain already handled, ignoring");
+            sendResponse({ ok: true, skipped: true });
+          } else {
+            hasBeenHandled = false;
+            cssFallbackInjected = false;
+            scheduleRetries();
+            startObserver();
+            sendResponse({ ok: true });
+          }
         } else if (msg.action === "getStatus") {
           sendResponse({
             handled: hasBeenHandled,
@@ -882,13 +896,26 @@
       return true;
     }
 
-    // Block policy/privacy links
+    // Block policy/privacy/legal links
     const policyPaths = [
       "privacy", "cookie-policy", "cookies-policy", "/cookies",
       "cookie_settings", "cookiepreferences", "cookie-preferences",
       "/policy", "/terms", "/legal", "/datenschutz", "/impressum",
+      "/agreement", "/tos", "/eula", "/license", "service-terms",
+      "/nutzungsbedingungen", "/agb", "/mentions-legales",
     ];
     if (href && policyPaths.some((p) => lowerHref.includes(p))) {
+      return true;
+    }
+
+    // Block legal/agreement text that looks like navigation (Vimeo-style)
+    const legalTextPatterns = [
+      "agreement", "terms of service", "terms of use", "viewer agreement",
+      "privacy notice", "legal notice", "end user license",
+      "nutzungsbedingungen", "allgemeine geschäftsbedingungen",
+      "conditions d'utilisation", "mentions légales",
+    ];
+    if (containsAny(t, legalTextPatterns)) {
       return true;
     }
 
@@ -942,6 +969,75 @@
         }
       } catch (e) { /* selector may be invalid in context */ }
     }
+    return null;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STRATEGY 1B: IAB TCF / CMP FRAMEWORK DETECTION
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function tryIABTCFDetection() {
+    // Check if IAB TCF API is present (used by many publisher networks)
+    const hasIAB = !!(window.__tcfapi || window.__cmp || window.__gpp);
+    if (!hasIAB) return null;
+
+    log("IAB TCF/CMP framework detected");
+
+    // IAB-compliant CMPs typically render consent UIs with specific patterns
+    const iabSelectors = [
+      // Sourcepoint
+      "button[title='Accept all']", "button[title='Accept All']",
+      ".message-button.sp_choice_type_11",
+      "[data-choice-type='11']", // Sourcepoint accept-all choice type
+      // IAB generic
+      ".qc-cmp2-summary-buttons button[mode='primary']",
+      "[data-tracking-opt-in-accept]",
+      // Reach PLC / UK publishers
+      ".sp_choice_type_11",
+      "button.sp_choice_type_ACCEPT_ALL",
+      // Globo / MacMagazine style
+      ".cookie-banner-lgpd_accept-button",
+      "[data-lgpd-accept]",
+      // Generic IAB consent buttons
+      ".consent-accept-all",
+      ".cmp-accept-all",
+      "#cmp-btn-accept",
+      ".cmp__dialog__actions button:first-child",
+    ];
+
+    for (const selector of iabSelectors) {
+      try {
+        const el = querySelectorDeep(selector);
+        if (el && isVisible(el)) {
+          const text = normalizeText(el.innerText || el.value || "");
+          if (!containsAny(text, NEGATIVE_KEYWORDS.slice(0, 40))) {
+            return el;
+          }
+        }
+      } catch (e) { /* skip */ }
+    }
+
+    // If IAB is present but no direct selector matched, look for the consent
+    // container that IAB frameworks typically inject
+    const iabContainers = [
+      "div[id^='sp_message_container']",
+      ".sp_message_container",
+      "#__cmpLocator",
+      "[id*='cmpbox']",
+      ".cmp-container",
+      "[class*='cmp-']",
+    ];
+
+    for (const sel of iabContainers) {
+      try {
+        const container = document.querySelector(sel);
+        if (container && isVisible(container)) {
+          const btn = findAcceptButtonInContainer(container);
+          if (btn) return btn;
+        }
+      } catch (e) { /* skip */ }
+    }
+
     return null;
   }
 
@@ -1238,6 +1334,56 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // CONSENT CONTEXT PROXIMITY CHECK
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function isInsideConsentContext(el) {
+    // Walk up the DOM tree (max 8 levels) to check if this button
+    // is inside something that looks like a consent interface
+    let parent = el.parentElement;
+    let depth = 0;
+    const maxDepth = 8;
+
+    while (parent && depth < maxDepth) {
+      try {
+        const style = window.getComputedStyle(parent);
+        const position = style.position;
+        const zIndex = parseInt(style.zIndex) || 0;
+
+        // Check 1: Is parent fixed/sticky (overlay-like)?
+        if (position === "fixed" || position === "sticky") return true;
+
+        // Check 2: High z-index (above normal content)?
+        if (zIndex > 100) return true;
+
+        // Check 3: Does parent have cookie-related class/id?
+        const idClass = normalizeText((parent.id || "") + " " + (parent.className || "").toString());
+        if (containsAny(idClass, [
+          "cookie", "consent", "gdpr", "privacy", "cmp", "banner",
+          "notice", "compliance", "dsgvo", "rgpd", "ccpa",
+        ])) return true;
+
+        // Check 4: Does parent have cookie-related text nearby?
+        const parentText = normalizeText((parent.innerText || "").substring(0, 500));
+        if (containsAny(parentText, [
+          "cookie", "cookies", "consent", "gdpr", "privacy",
+          "we use cookies", "this site uses", "data protection",
+        ])) return true;
+
+        // Check 5: Is this a dialog/alertdialog role?
+        const role = parent.getAttribute && parent.getAttribute("role");
+        if (role === "dialog" || role === "alertdialog") return true;
+
+      } catch (e) { /* skip */ }
+
+      parent = parent.parentElement;
+      depth++;
+    }
+
+    return false;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // STRATEGY 6: FULL-PAGE SCAN (strict, last resort)
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1266,6 +1412,11 @@
 
           // Only strong accept phrases for full-page scan
           if (!containsAny(text, ACCEPT_PHRASES_STRONG)) continue;
+
+          // GOLD CODE PRINCIPLE: Proximity check
+          // Full-page scan buttons MUST be inside a consent-like container
+          // (fixed/sticky positioned, or high z-index, or has cookie context nearby)
+          if (!isInsideConsentContext(el)) continue;
 
           const rect = el.getBoundingClientRect();
           const area = rect.width * rect.height;
@@ -1449,11 +1600,17 @@
   // MAIN ORCHESTRATOR
   // ═══════════════════════════════════════════════════════════════════════════
 
+  function isCMPOnlyDomain() {
+    const hostname = window.location.hostname;
+    return CMP_ONLY_DOMAINS.some((d) => hostname === d || hostname.endsWith("." + d));
+  }
+
   function tryAcceptCookies() {
     if (hasBeenHandled) return false;
     if (siteBlocked) return false;
     if (isLikelyRobotPage()) return false;
 
+    const cmpOnly = isCMPOnlyDomain();
     let button = null;
 
     // Strategy 1: CMP-specific selectors (fastest, most reliable)
@@ -1461,6 +1618,21 @@
     if (button) {
       clickButton(button, "CMP selector");
       return true;
+    }
+
+    // Strategy 1B: IAB TCF framework detection
+    button = tryIABTCFDetection();
+    if (button) {
+      clickButton(button, "IAB TCF");
+      return true;
+    }
+
+    // GOLD CODE SAFEGUARD: On problematic domains, ONLY use CMP selectors
+    // and IAB detection. Do NOT use heuristic strategies that can cause
+    // redirect loops (X.com/Grok, NYT/Cooking, Vimeo/legal).
+    if (cmpOnly) {
+      log("CMP-only domain, skipping heuristic strategies");
+      return false;
     }
 
     // Strategy 2: Container-based detection
@@ -1494,7 +1666,7 @@
       return true;
     }
 
-    // Strategy 6: Full-page scan (last resort)
+    // Strategy 6: Full-page scan (last resort, with proximity check)
     button = tryFullPageScan();
     if (button) {
       clickButton(button, "full-page scan");
@@ -1544,9 +1716,23 @@
     if (newUrl === lastUrl) return;
 
     log("SPA navigation detected:", lastUrl, "→", newUrl);
+
+    // GOLD CODE PRINCIPLE: Domain Acceptance Lock
+    // Only reset scanning if the DOMAIN changed.
+    // Same-domain path changes (e.g., Garmin cart → product page) should NOT
+    // re-enable scanning, because cookies were already accepted for this domain.
+    const oldHostname = extractHostname(lastUrl);
+    const newHostname = extractHostname(newUrl);
     lastUrl = newUrl;
 
-    // Reset state for new page
+    if (oldHostname === newHostname && clickCount > 0) {
+      // Same domain and we already clicked something — do NOT reset.
+      // The banner was already handled for this domain.
+      log("Same-domain navigation, acceptance lock preserved");
+      return;
+    }
+
+    // Different domain or no prior clicks — safe to reset
     hasBeenHandled = false;
     cssFallbackInjected = false;
     // Don't reset clickCount — keep per-domain limit
@@ -1556,6 +1742,14 @@
       scheduleRetries();
       startObserver();
     }, CONFIG.observerReactivateDelay);
+  }
+
+  function extractHostname(url) {
+    try {
+      return new URL(url).hostname;
+    } catch (e) {
+      return window.location.hostname;
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
