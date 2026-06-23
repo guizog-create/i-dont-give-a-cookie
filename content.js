@@ -436,6 +436,46 @@
     "cookies", "consentimento", "privacidade", "dados pessoais",
     // Dutch
     "cookies", "toestemming", "privacy", "persoonsgegevens",
+    // Polish
+    "ciasteczka", "zgoda", "prywatność", "dane osobowe",
+    // Swedish
+    "kakor", "samtycke", "integritet", "personuppgifter",
+    // Danish / Norwegian
+    "informationskapsler", "samtykke", "personvern", "personoplysninger",
+    // Finnish
+    "evästeet", "eväste", "suostumus", "yksityisyys", "tietosuoja",
+    // Czech
+    "soubory cookie", "souhlas", "soukromí", "osobní údaje",
+    // Romanian
+    "module cookie", "consimțământ", "confidențialitate",
+    // Hungarian
+    "sütik", "süti", "hozzájárulás", "adatvédelem",
+    // Greek
+    "cookies", "συγκατάθεση", "απόρρητο", "προσωπικά δεδομένα",
+    // Turkish
+    "çerez", "cerez", "çerezler", "cerezler", "onay", "gizlilik",
+    "kişisel veri", "veri koruma",
+    // Russian
+    "файлы cookie", "куки", "согласие", "конфиденциальность",
+    "персональные данные",
+    // Ukrainian
+    "файли cookie", "згода", "конфіденційність",
+    // Japanese
+    "クッキー", "cookie", "同意", "プライバシー", "個人情報",
+    // Chinese
+    "cookie", "隐私", "个人信息", "数据保护", "同意",
+    // Korean
+    "쿠키", "동의", "개인정보", "개인 정보",
+    // Arabic
+    "ملفات تعريف الارتباط", "كوكيز", "موافقة", "خصوصية",
+    // Thai
+    "คุกกี้", "ความยินยอม", "ความเป็นส่วนตัว",
+    // Vietnamese
+    "cookie", "đồng ý", "quyền riêng tư",
+    // Indonesian
+    "cookie", "persetujuan", "privasi",
+    // Hindi
+    "कुकी", "सहमति", "गोपनीयता",
     // Generic
     "rgpd", "lgpd", "ccpa", "eprivacy", "dsgvo",
   ];
@@ -756,6 +796,12 @@
       const hasCookieHint = containsAny(idClass, [
         "cookie", "consent", "gdpr", "privacy", "banner", "notice",
         "compliance", "dsgvo", "rgpd", "ccpa", "eprivacy",
+        // Multilingual class/id hints
+        "cerez", "çerez", "datenschutz", "consentement", "confidentialit",
+        "privacidad", "consenso", "toestemming", "ciasteczk",
+        "kakor", "samtycke", "eväste", "souhlas", "süti",
+        "gizlilik", "куки", "согласие",
+        "クッキー", "쿠키", "คุกกี้", "كوكيز", "कुकी",
       ]);
 
       const innerText = normalizeText(el.innerText || "");
