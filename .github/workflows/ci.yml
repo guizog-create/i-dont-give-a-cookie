@@ -27,6 +27,12 @@ jobs:
       - run: npm run lint
       - run: npm test -- --slow --perf
       - run: npm run pack
+      - name: Smoke-test the packed zip (catches files missing from the build)
+        run: |
+          mkdir -p dist/ext && unzip -q dist/*.zip -d dist/ext
+          for t in "popup" "site rules" "CMP API" "onetrust"; do
+            IDGAC_EXT_DIR=dist/ext node tests/e2e.js "$t"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: extension-zip

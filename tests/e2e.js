@@ -15,7 +15,8 @@ const os = require("os");
 const path = require("path");
 const { chromium } = require("playwright");
 
-const EXT_DIR = path.resolve(__dirname, "..");
+// IDGAC_EXT_DIR lets CI run the suite against the unpacked store zip
+const EXT_DIR = path.resolve(process.env.IDGAC_EXT_DIR || path.join(__dirname, ".."));
 const FIXTURES = path.join(__dirname, "fixtures");
 const args = process.argv.slice(2);
 const filter = args.find((a) => !a.startsWith("--"));
