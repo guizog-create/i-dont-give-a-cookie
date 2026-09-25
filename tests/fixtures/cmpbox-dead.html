@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Consentmanager dead button</title></head><body>
+<script src="/harness.js"></script>
+<button id="page-btn" data-track="page" style="position:absolute;top:10px;left:10px">Page button</button>
+<div class="cmpboxBGoverlay" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2147483600"></div>
+<div id="cmpbox" style="position:fixed;top:30%;left:25%;width:50%;height:200px;background:#fff;z-index:2147483647;padding:12px">
+  <p>We use cookies and similar technologies.</p>
+  <a href="#" class="cmpboxbtn cmpboxbtnyes" data-track="yes">Accept</a>
+</div>
+<script>
+  // Broken CMP: the accept button never closes the dialog.
+  document.querySelector(".cmpboxbtnyes").addEventListener("click", (e) => e.preventDefault());
+</script>
+</body></html>

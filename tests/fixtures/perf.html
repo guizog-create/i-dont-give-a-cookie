@@ -1,0 +1,23 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Perf</title></head><body>
+<script src="/harness.js"></script>
+<div id="big"></div>
+<footer><a href="/cookies">Cookie settings</a> · <a href="/privacy">Privacy</a></footer>
+<div id="ticker"></div>
+<script>
+  // ~6000 elements, no banner, one live-updating ticker (like a news/stock page).
+  const big = document.getElementById("big");
+  let html = "";
+  for (let i = 0; i < 1500; i++) html += '<div class="card"><section><span>Item ' + i + '</span><a href="#">link</a></section></div>';
+  big.innerHTML = html;
+  const ticker = document.getElementById("ticker");
+  setInterval(() => { const s = document.createElement("span"); s.textContent = Date.now(); ticker.replaceChildren(s); }, 100);
+  // Main-thread lag monitor.
+  window.__lag = { max: 0, total: 0 };
+  let last = performance.now();
+  setInterval(() => {
+    const now = performance.now(), over = now - last - 10;
+    if (over > 0) { window.__lag.total += over; window.__lag.max = Math.max(window.__lag.max, over); }
+    last = now;
+  }, 10);
+</script>
+</body></html>

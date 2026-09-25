@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><title>TCF</title></head><body>
+<script src="/harness.js"></script>
+<iframe name="__tcfapiLocator" style="display:none"></iframe>
+<script>window.__tcfapi = function () {};</script>
+<p>Publisher content.</p>
+<div id="sp_message_container_123" style="position:fixed;inset:0;z-index:999;background:rgba(0,0,0,.5)">
+  <div class="message" style="background:#fff;margin:20% auto;width:400px;padding:12px">
+    <p>We and our partners store and/or access information on a device, such as unique IDs.</p>
+    <button class="message-button sp_choice_type_11" data-track="accept">Yes, I'm happy</button>
+    <button class="message-button sp_choice_type_12" data-track="manage">Manage</button>
+  </div>
+</div>
+<script>
+  document.querySelector(".sp_choice_type_11").onclick = () =>
+    document.getElementById("sp_message_container_123").remove();
+</script>
+</body></html>

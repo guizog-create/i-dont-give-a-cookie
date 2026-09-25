@@ -221,6 +221,11 @@
       background: #4a4a6a;
     }
 
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+
     .btn-row {
       display: flex;
       gap: 6px;
@@ -248,7 +253,7 @@
 <body>
   <div class="header">
     <h1>I Don't Give a Cookie</h1>
-    <div class="version" id="version">v2.0.0</div>
+    <div class="version" id="version"></div>
   </div>
 
   <div class="section">
