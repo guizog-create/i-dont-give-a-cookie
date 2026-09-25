@@ -1,7 +1,7 @@
 // I Don't Give a Cookie - Universal Cookie Consent Auto-Acceptor
-// v2.2.0 - Context-gated detection, single-activation clicks with
-// verification, per-site state keyed by the top-level site, and a
-// fast path that keeps idle pages cheap.
+// v2.3.0 - CMP JavaScript APIs first (via cmp-api.js), then context-gated
+// clicks with verification; per-site state keyed by the top-level site;
+// a fast path that keeps idle pages cheap.
 
 (() => {
   "use strict";
@@ -996,6 +996,70 @@
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
+  // STRATEGY 0: CMP JAVASCRIPT APIs (via cmp-api.js in the page world)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Calling a CMP's own "accept all" is sturdier than clicking its markup.
+  // Only used while that CMP's banner is visibly on screen: calling it when
+  // no banner shows could overwrite a choice the user made earlier.
+
+  const API_CMPS = [
+    { id: "onetrust", banner: "#onetrust-banner-sdk" },
+    { id: "cookiebot", banner: "#CybotCookiebotDialog" },
+    { id: "didomi", banner: "#didomi-popup, #didomi-notice" },
+    { id: "usercentrics", banner: "#usercentrics-root" },
+    { id: "klaro", banner: ".klaro .cookie-notice, .klaro .cookie-modal" },
+    { id: "consentmanager", banner: "#cmpbox" },
+    { id: "cookiescript", banner: "#cookiescript_injected" },
+    { id: "tarteaucitron", banner: "#tarteaucitronAlertBig" },
+    { id: "cookieconsent", banner: "#cc-main .cm" },
+  ];
+  const API_REQUEST = "idgac:cmp-api-request";
+  const API_RESPONSE = "idgac:cmp-api-response";
+  const API_TIMEOUT_MS = 500;
+  const apiTried = new Set(); // one API attempt per CMP per page load
+
+  function findApiTarget() {
+    for (const cmp of API_CMPS) {
+      if (apiTried.has(cmp.id)) continue;
+      let banner = null;
+      try {
+        banner = document.querySelector(cmp.banner);
+      } catch (e) { /* skip */ }
+      if (!banner || !isVisible(banner)) continue;
+      if (!RE_CONTEXT.test(visibleText(banner))) continue;
+      return { el: banner, container: banner, api: cmp.id, strategy: `CMP API ${cmp.id}` };
+    }
+    return null;
+  }
+
+  let apiRequestId = 0;
+
+  function callCmpApi(cmp) {
+    return new Promise((resolve) => {
+      const id = `${Date.now()}-${++apiRequestId}`;
+      const onResponse = (event) => {
+        let data = null;
+        try {
+          data = JSON.parse(event.detail);
+        } catch (e) { /* not ours */ }
+        if (!data || data.id !== id) return;
+        cleanup();
+        resolve(!!data.ok);
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        resolve(false); // bridge missing (e.g. about:blank frame) or CMP hung
+      }, API_TIMEOUT_MS);
+      const cleanup = () => {
+        clearTimeout(timer);
+        document.removeEventListener(API_RESPONSE, onResponse);
+      };
+      document.addEventListener(API_RESPONSE, onResponse);
+      document.dispatchEvent(new CustomEvent(API_REQUEST, { detail: JSON.stringify({ id, cmp }) }));
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
   // DETECTION PIPELINE
   // ═══════════════════════════════════════════════════════════════════════════
 
@@ -1005,6 +1069,9 @@
   // mutations that add nothing cookie-related (tickers, carousels, ads).
   function findTarget(full = true) {
     if (isChallengePage()) return null;
+    const api = findApiTarget();
+    if (api) return api;
+
     const roots = full ? collectRoots() : [document];
 
     const cmp = findCMPButton(roots);
@@ -1196,6 +1263,23 @@
         state.phase = "scanning";
         return;
       }
+      if (target.api) {
+        apiTried.add(target.api);
+        log(`Calling ${target.api} accept-all API`);
+        callCmpApi(target.api).then((ok) => {
+          if (state.phase !== "clicking") return;
+          state.lastStrategy = target.strategy;
+          if (!ok) {
+            log(`${target.api} API unavailable, falling back to clicking`);
+            state.phase = "scanning";
+            scan();
+            return;
+          }
+          state.phase = "verifying";
+          verify(target, CONFIG.verifyStartMs);
+        });
+        return;
+      }
       try {
         log(`Clicking via ${target.strategy}:`, buttonText(target.el));
         activate(target.el);
@@ -1233,7 +1317,8 @@
   }
 
   function onStillVisible(target) {
-    if (state.attempts < CONFIG.clickAttemptsPerBanner) {
+    // An API call that didn't close the banner doesn't use up a click attempt
+    if (target.api || state.attempts < CONFIG.clickAttemptsPerBanner) {
       log(`Banner still visible after attempt ${state.attempts}, retrying`);
       state.phase = "scanning";
       scan();

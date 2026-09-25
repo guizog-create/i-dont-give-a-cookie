@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "I Don't Give a Cookie",
   "description": "Automatically accepts cookie consent banners on virtually any website, in 25+ languages and all major consent platforms.",
-  "version": "2.2.0",
-  "minimum_chrome_version": "105",
+  "version": "2.3.0",
+  "minimum_chrome_version": "111",
   "permissions": [
     "storage",
     "activeTab"
@@ -27,8 +27,23 @@
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "cmp-api.js"
+      ],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "content.js"
+      ],
       "run_at": "document_idle",
       "all_frames": true
     }

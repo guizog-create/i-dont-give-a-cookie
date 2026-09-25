@@ -220,6 +220,36 @@ const tests = [
     },
   },
   {
+    name: "CMP API: uses OneTrust.AllowAll() when the banner is showing",
+    async run({ page }) {
+      await page.goto(url("api-onetrust.html"));
+      const ok = await waitFor(async () => (await clicks(page)).api);
+      expect(ok, "OneTrust.AllowAll() was not called");
+      await sleep(1500);
+      const c = await clicks(page);
+      expect(c.api === 1, `AllowAll() called ${c.api} times, expected 1`);
+      expect(!c.button, "clicked the button even though the API worked");
+    },
+  },
+  {
+    name: "CMP API: falls back to clicking when the API doesn't close the banner",
+    async run({ page }) {
+      await page.goto(url("api-noop.html"));
+      const ok = await waitFor(async () => (await clicks(page)).button, 6000);
+      const c = await clicks(page);
+      expect(c.api === 1, `Didomi API called ${c.api} times, expected 1`);
+      expect(ok && c.button === 1, `button clicked ${c.button} times, expected 1`);
+    },
+  },
+  {
+    name: "SAFETY: never calls a CMP API when its banner isn't showing",
+    async run({ page }) {
+      await page.goto(url("api-hidden.html"));
+      await sleep(3000);
+      expect(!(await clicks(page)).api, "overrode a prior choice via OneTrust.AllowAll()");
+    },
+  },
+  {
     name: "loop guard: stops clicking when a site reloads and re-shows the banner",
     async run({ page }) {
       await page.goto(url("reload-loop.html"));

@@ -1,12 +1,12 @@
 {
   "name": "i-dont-give-a-cookie",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "description": "Chrome extension that auto-accepts cookie consent banners",
   "license": "MIT",
   "scripts": {
     "test": "node tests/e2e.js",
-    "lint": "node --check content.js && node --check background.js && node --check popup.js",
+    "lint": "node --check cmp-api.js && node --check content.js && node --check background.js && node --check popup.js",
     "pack": "node scripts/pack.js"
   },
   "devDependencies": {
