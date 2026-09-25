@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Consent without the word cookie</title></head><body>
+<script src="/harness.js"></script>
+<p>News site. Contact us at the newsroom.</p>
+<div class="privacy-prompt" style="position:fixed;bottom:0;left:0;right:0;height:90px;background:#fff;z-index:9999;padding:10px">
+  We need your consent to use your data for personalised ads and measurement. Questions? Contact us.
+  <button data-track="agree">Agree</button> <button data-track="manage">Manage options</button>
+</div>
+<script>document.querySelector("[data-track=agree]").onclick = () => document.querySelector(".privacy-prompt").remove();</script>
+</body></html>
