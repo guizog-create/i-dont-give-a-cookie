@@ -5,12 +5,14 @@
   "description": "Chrome extension that auto-accepts cookie consent banners",
   "license": "MIT",
   "scripts": {
-    "test": "node tests/e2e.js",
-    "lint": "node --check cmp-api.js && node --check content.js && node --check background.js && node --check popup.js",
+    "test": "node tests/unit.js && node tests/e2e.js",
+    "lint": "for f in cmp-api.js content.js background.js popup.js domain.js psl-rules.js; do node --check $f || exit 1; done",
     "pack": "node scripts/pack.js",
-    "crawl": "node scripts/crawl.js"
+    "crawl": "node scripts/crawl.js",
+    "update-psl": "node scripts/update-psl.js"
   },
   "devDependencies": {
-    "playwright": "1.56.1"
+    "playwright": "1.56.1",
+    "psl": "1.15.0"
   }
 }
