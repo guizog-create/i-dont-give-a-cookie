@@ -488,18 +488,18 @@
   // Deliberately excludes generic words like "privacy", "terms" or "tracking":
   // those also appear in sign-up and Terms-of-Service dialogs, which we must
   // never answer on the user's behalf.
-  const COOKIE_CONTEXT_KEYWORDS = [
-    "cookie", "consent", "gdpr", "store and/or access information",
+  // Strong: only cookie/tracking consent UIs talk like this.
+  const COOKIE_CONTEXT_STRONG = [
+    "cookie", "gdpr", "store and/or access information",
     "similar technologies", "we and our partners",
-    "consentement", "traceurs", "stocker et/ou accéder",
-    "einwilligung", "speichern und/oder", "wir und unsere partner",
-    "consentimiento", "almacenar y/o acceder",
-    "consenso", "archiviare e/o accedere",
-    "consentimento", "armazenar e/ou aceder",
-    "toestemming",
+    "traceurs", "stocker et/ou accéder",
+    "speichern und/oder", "wir und unsere partner",
+    "almacenar y/o acceder",
+    "archiviare e/o accedere",
+    "armazenar e/ou aceder",
     "ciasteczk", "pliki cookie", "plików cookie",
-    "kakor", "samtycke", "samtykke", "informasjonskapsler",
-    "eväste", "suostumus",
+    "kakor", "informasjonskapsler",
+    "eväste",
     "soubory cookie",
     "sütik", "süti",
     "çerez", "cerez",
@@ -510,6 +510,42 @@
     "คุกกี้",
     "कुकी",
   ];
+
+  // Weak: "consent" also appears in account, Terms and marketing dialogs.
+  const COOKIE_CONTEXT_WEAK = [
+    "consent", "consentement", "einwilligung", "consentimiento", "consenso",
+    "consentimento", "toestemming", "samtycke", "samtykke", "suostumus",
+  ];
+
+  const COOKIE_CONTEXT_KEYWORDS = [...COOKIE_CONTEXT_STRONG, ...COOKIE_CONTEXT_WEAK];
+
+  // A weak-context box that talks about any of this is an account/legal
+  // dialog, not a cookie banner.
+  const ACCOUNT_OR_LEGAL_TEXT = [
+    "terms of service", "terms of use", "terms and conditions", "terms & conditions",
+    "user agreement", "account", "accounts", "sign up", "sign-up", "sign in",
+    "log in", "register", "registration", "password", "subscription",
+    "subscribe", "newsletter", "marketing emails",
+    "conditions générales", "compte", "mot de passe", "inscription",
+    "nutzungsbedingungen", "agb", "konto", "passwort", "registrieren",
+    "registrierung", "términos", "cuenta", "contraseña", "termini",
+    "iscriviti", "registrati", "termos", "conta", "senha", "voorwaarden",
+    "wachtwoord", "registreren",
+  ];
+
+  // Age gates: answering them is a legal statement, never ours to make
+  const AGE_GATE_TEXT = [
+    "years old", "years of age", "18+", "21+", "are you over", "are you 18",
+    "are you 21", "legal age", "drinking age", "age verification", "verify your age",
+    "date of birth", "confirm your age", "enter your birthday",
+    "ans ou plus", "plus de 18 ans", "âge légal", "majeur",
+    "jahre oder älter", "über 18", "volljährig", "altersverifikation",
+    "mayor de edad", "maggiorenne", "maior de idade", "18 jaar",
+  ];
+
+  const FORM_FIELD_SELECTOR =
+    "input:not([type]), input[type='text'], input[type='email'], input[type='password'], " +
+    "input[type='tel'], input[type='number'], input[type='search'], input[type='url'], textarea";
 
   // id/class fragments that mark an element as a consent container.
   // Not "cmp" (Adobe AEM prefixes every component with cmp-) and not
@@ -578,6 +614,9 @@
   const RE_EXACT = compileMatcher([...ACCEPT_PHRASES_GENERIC, ...ACCEPT_WORDS_EXACT_ONLY], "exact");
   const RE_NEGATIVE = compileMatcher(NEGATIVE_KEYWORDS, "prefix");
   const RE_CONTEXT = compileMatcher(COOKIE_CONTEXT_KEYWORDS, "prefix");
+  const RE_CONTEXT_STRONG = compileMatcher(COOKIE_CONTEXT_STRONG, "prefix");
+  const RE_ACCOUNT_OR_LEGAL = compileMatcher(ACCOUNT_OR_LEGAL_TEXT, "word");
+  const RE_AGE_GATE = compileMatcher(AGE_GATE_TEXT, "prefix");
   const RE_CAPTCHA = compileMatcher(CAPTCHA_TEXT, "word");
   const RE_HINT = new RegExp(CONTAINER_HINTS.map(escapeRegExp).join("|"), "i");
   const RE_LEGAL_TEXT = compileMatcher([
@@ -824,16 +863,35 @@
   // sign-up forms. Deliberately does not look at <body>: a "Cookie policy"
   // footer link must not make every button on the page eligible.
   function hasConsentContext(el) {
+    let hinted = null;
     let node = el;
     for (let depth = 0; node && depth < CONFIG.maxAncestorWalk; depth++) {
       if (node === document.body || node === document.documentElement) break;
-      if (RE_HINT.test(classAndId(node))) return true;
+      if (RE_HINT.test(classAndId(node))) {
+        hinted = node;
+        break;
+      }
       node = parentOf(node);
     }
+    if (hinted && isConsentUI(hinted, visibleText(hinted), true)) return true;
     const box = floatingAncestor(el);
-    if (box && RE_CONTEXT.test(visibleText(box))) return true;
+    if (box && isConsentUI(box, visibleText(box))) return true;
     // Inside a CMP iframe (Sourcepoint, TrustArc…) the whole document is the banner
-    return !IS_TOP && RE_CONTEXT.test(normalizeText((document.body && document.body.innerText) || ""));
+    if (IS_TOP || !document.body) return false;
+    return isConsentUI(document.body, normalizeText(document.body.innerText || ""));
+  }
+
+  // Is this box a cookie/consent UI we may answer? `text` is its visible text.
+  function isConsentUI(box, text, hinted = false) {
+    if (!hinted && !RE_CONTEXT.test(text)) return false;
+    if (RE_AGE_GATE.test(text) || RE_CAPTCHA.test(text)) return false;
+    // Cookie banners never ask you to type; sign-up and login dialogs do
+    for (const field of queryAllDeep(collectRoots(box), FORM_FIELD_SELECTOR)) {
+      if (isVisible(field)) return false;
+    }
+    // "Consent" alone isn't enough when the box is about accounts or terms
+    if (!RE_CONTEXT_STRONG.test(text) && RE_ACCOUNT_OR_LEGAL.test(text)) return false;
+    return true;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -903,9 +961,8 @@
     if (rect.width < CONFIG.minBannerWidth || rect.height < CONFIG.minBannerHeight) return false;
 
     const text = visibleText(el);
-    if (!RE_CONTEXT.test(text)) return false;       // must *say* cookies/consent
-    if (RE_CAPTCHA.test(text)) return false;
     if (text.length > CONFIG.maxContainerTextLength) return false;
+    if (!isConsentUI(el, text)) return false;       // must *say* cookies/consent
 
     const vw = window.innerWidth || 1024;
     const vh = window.innerHeight || 768;

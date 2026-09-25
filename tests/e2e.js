@@ -177,6 +177,35 @@ const tests = [
     },
   },
   {
+    name: "SAFETY: never agrees in account/Terms dialogs that say 'consent'",
+    async run({ page }) {
+      await page.goto(url("tos-consent.html"));
+      await sleep(3000);
+      const c = await clicks(page);
+      expect(!c["signup-agree"], "clicked 'I agree' in a sign-up dialog with an email field");
+      expect(!c["terms-agree"], "consented to updated Terms of Service");
+    },
+  },
+  {
+    name: "SAFETY: never answers an age gate, even one mentioning cookies",
+    async run({ page }) {
+      await page.goto(url("age-gate.html"));
+      await sleep(3000);
+      const c = await clicks(page);
+      expect(!c.yes, "answered 'Are you over 18?' with Yes");
+      expect(!c.cookies, "clicked inside an age gate");
+    },
+  },
+  {
+    name: "consent banner without the word 'cookie' is still accepted",
+    async run({ page }) {
+      await page.goto(url("consent-only.html"));
+      const ok = await waitFor(async () => (await clicks(page)).agree);
+      expect(ok, "weak-context consent banner was not accepted");
+      expect(!(await clicks(page)).manage, "clicked 'Manage options'");
+    },
+  },
+  {
     name: "broken CMP: CSS fallback removes the blocking overlay too, bounded clicks",
     async run({ page }) {
       await page.goto(url("cmpbox-dead.html"));

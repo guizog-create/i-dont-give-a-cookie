@@ -14,7 +14,10 @@ A Chrome extension that automatically accepts cookie consent banners on virtuall
 - **Loop guard**: if a site reloads and shows the banner again, it stops after 6 clicks per minute and backs off for 10 minutes
 - **Per-site controls**: block/allow from the popup. The page reacts immediately and the setting also covers CMP iframes on that site
 - **Shadow DOM**: open shadow roots, plus closed ones on custom elements via `chrome.dom`
-- **Safety guards**: never answers non-cookie dialogs ("Delete account?", Terms of Service, feedback polls) and never clicks "reject/settings/subscribe/sign in", real navigation links, checkboxes, disabled buttons or CAPTCHA widgets
+- **Safety guards**: never answers non-cookie dialogs ("Delete account?", sign-up or Terms dialogs, even ones that say "consent", feedback polls), never answers age gates, never touches boxes with form fields, and never clicks "reject/settings/subscribe/sign in", real navigation links, checkboxes, disabled buttons or CAPTCHA widgets
+- **CMP JavaScript APIs**: for OneTrust, Cookiebot, Didomi, Usercentrics, Klaro, consentmanager, Cookie-Script, tarteaucitron and CookieConsent it calls the platform's own "accept all" (only while its banner is visible), then verifies, and falls back to clicking
+- **Site rules as data**: per-site fixes in `rules/sites.json` (see [rules/README.md](rules/README.md))
+- **Real-site crawler**: `npm run crawl` compares ~230 European sites with and without the extension and flags anything suspicious
 - **Debug mode**: logs every decision to the page console with the `[IDGAC]` prefix
 - **No runtime dependencies**: plain JavaScript, no build step
 
@@ -37,6 +40,8 @@ page load / SPA navigation / popup "Re-scan"
   │ (throttled; full scan only when added nodes    │
   │  mention cookies/consent)                      │
   │                                                │
+  │ 0. Site rule accept selectors (rules/sites.json)│
+  │    CMP JavaScript API if its banner is visible │
   │ 1. Known CMP accept selectors                  │
   │    (gated: must sit inside a consent UI)       │
   │ 2. Consent containers                          │
@@ -93,6 +98,7 @@ npm test             # end-to-end tests in real Chromium with the extension load
 npm test -- --slow   # also the SPA test (~40 s)
 npm test -- --perf   # also print the main-thread cost benchmark
 npm run lint         # syntax check
+npm run crawl        # real-site crawl → crawl-report/report.html (run from an EU network)
 npm run pack         # dist/i-dont-give-a-cookie-<version>.zip for the Chrome Web Store
 npm run update-psl   # regenerate psl-rules.js after bumping the psl dev dependency
 ```
