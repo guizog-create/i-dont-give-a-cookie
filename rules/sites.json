@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "sites": [
+    {
+      "domains": ["x.com", "twitter.com"],
+      "mode": "cmp-only",
+      "reason": "Heuristic clicks once triggered a redirect loop into Grok"
+    },
+    {
+      "domains": ["nytimes.com"],
+      "mode": "cmp-only",
+      "reason": "Heuristic clicks once redirected into NYT Cooking"
+    },
+    {
+      "domains": ["vimeo.com"],
+      "mode": "cmp-only",
+      "reason": "Heuristic clicks once looped on the legal / viewer agreement pages"
+    }
+  ]
+}

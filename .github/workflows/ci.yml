@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run lint
+      - run: npm test -- --slow --perf
+      - run: npm run pack
+      - name: Smoke-test the packed zip (catches files missing from the build)
+        run: |
+          mkdir -p dist/ext && unzip -q dist/*.zip -d dist/ext
+          for t in "popup" "site rules" "CMP API" "onetrust"; do
+            IDGAC_EXT_DIR=dist/ext node tests/e2e.js "$t"
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: extension-zip
+          path: dist/*.zip

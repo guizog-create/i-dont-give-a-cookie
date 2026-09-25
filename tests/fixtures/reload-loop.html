@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Reload loop</title></head><body>
+<script src="/harness.js"></script>
+<p>This site reloads after consent and shows the banner again (broken consent storage).</p>
+<div id="onetrust-banner-sdk" style="position:fixed;bottom:0;left:0;right:0;z-index:2147483645;background:#fff;padding:20px">
+  <p>We use cookies.</p>
+  <button id="onetrust-accept-btn-handler">Accept All Cookies</button>
+</div>
+<script>
+  document.getElementById("onetrust-accept-btn-handler").onclick = () => {
+    sessionStorage.n = String(Number(sessionStorage.n || 0) + 1);
+    location.reload();
+  };
+</script>
+</body></html>

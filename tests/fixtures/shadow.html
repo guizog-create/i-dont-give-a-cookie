@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Usercentrics</title></head><body>
+<script src="/harness.js"></script>
+<p>Content</p>
+<div id="usercentrics-root" style="position:fixed;bottom:0;left:0;right:0;z-index:9999"></div>
+<script>
+  const root = document.getElementById("usercentrics-root").attachShadow({ mode: "open" });
+  root.innerHTML = '<div style="background:#fff;padding:16px"><p>We use cookies and other technologies.</p>' +
+    '<button data-testid="uc-deny-all-button" data-track="deny">Deny</button>' +
+    '<button data-testid="uc-accept-all-button" data-track="accept">Accept All</button></div>';
+  // Count directly on the button: a non-composed synthetic click never reaches document.
+  root.querySelector("[data-track=accept]").onclick = () => {
+    window.__clicks.direct = (window.__clicks.direct || 0) + 1;
+    document.getElementById("usercentrics-root").remove();
+  };
+</script>
+</body></html>

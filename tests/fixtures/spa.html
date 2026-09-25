@@ -1,0 +1,15 @@
+<!doctype html><html><head><meta charset="utf-8"><title>SPA</title></head><body>
+<script src="/harness.js"></script>
+<p>Single-page app. A consent banner appears after a client-side route change.</p>
+<script>
+  window.__navigate = () => {
+    history.pushState({}, "", "/spa.html?route=2");
+    const d = document.createElement("div");
+    d.className = "consent-modal";
+    d.style.cssText = "position:fixed;bottom:0;left:0;right:0;height:80px;background:#fff;z-index:9999";
+    d.innerHTML = 'We use cookies for analytics. <button data-track="accept">Accept all</button>';
+    document.body.appendChild(d);
+    d.querySelector("button").onclick = () => d.remove();
+  };
+</script>
+</body></html>
