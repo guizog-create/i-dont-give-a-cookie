@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Fade</title>
+<style>#CybotCookiebotDialog{position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#fff;padding:20px;transition:opacity 1s}</style></head><body>
+<script src="/harness.js"></script>
+<p>Content</p>
+<script>
+  // CMP injected late, fades out over 1 s after acceptance (common pattern).
+  setTimeout(() => {
+    const d = document.createElement("div");
+    d.id = "CybotCookiebotDialog";
+    d.innerHTML = '<p>This website uses cookies.</p>' +
+      '<button id="CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll" data-track="accept">Allow all</button>' +
+      '<button id="CybotCookiebotDialogBodyButtonDecline" data-track="decline">Deny</button>';
+    document.body.appendChild(d);
+    d.querySelector("[data-track=accept]").addEventListener("click", () => {
+      d.style.opacity = "0.3";
+      setTimeout(() => d.remove(), 1000);
+    });
+  }, 300);
+</script>
+</body></html>

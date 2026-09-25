@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Site with CMP iframe</title></head><body>
+<script src="/harness.js"></script>
+<p>Publisher page.</p>
+<iframe id="cmp" style="position:fixed;bottom:0;left:0;width:100%;height:140px;border:0;z-index:9999;background:#fff"></iframe>
+<script>
+  // Cross-origin CMP iframe, like Sourcepoint (privacy-mgmt.com) or TrustArc.
+  document.getElementById("cmp").src = "http://localhost:" + location.port + "/cmp-frame.html";
+</script>
+</body></html>

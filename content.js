@@ -1,12 +1,13 @@
 // I Don't Give a Cookie - Universal Cookie Consent Auto-Acceptor
-// v2.0.0 - Hardened production engine with click verification, CSS fallback,
-// SPA support, error recovery, and bulletproof detection pipeline.
+// v2.2.0 - Context-gated detection, single-activation clicks with
+// verification, per-site state keyed by the top-level site, and a
+// fast path that keeps idle pages cheap.
 
 (() => {
   "use strict";
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // GLOBAL ERROR BOUNDARY
+  // LOGGING
   // ═══════════════════════════════════════════════════════════════════════════
 
   const EXTENSION_ID = "IDGAC";
@@ -25,21 +26,26 @@
   // ═══════════════════════════════════════════════════════════════════════════
 
   const CONFIG = {
-    maxClicksPerDomain: 5,
-    debounceMs: 200,
-    maxRetryDuration: 30000,      // Extended from 15s to 30s for slow CMPs
-    retryInterval: 500,
+    scanWindowMs: 30000,          // How long to keep looking after (re)arming
+    scanThrottleMs: 250,          // Min gap between mutation-triggered scans
+    retryDelays: [100, 250, 500, 800, 1200, 1800, 2500, 3500, 5000, 7500, 10000, 15000, 20000, 25000],
+    verifyStartMs: 600,           // First dismissal check after a click
+    verifyEndMs: 2000,            // Give fade-out animations this long
+    verifyPollMs: 200,
+    clickAttemptsPerBanner: 3,    // Clicks before the CSS fallback kicks in
+    maxBannersPerPage: 2,         // e.g. site banner + a second consent step
     maxButtonTextLength: 60,
     minBannerWidth: 150,
     minBannerHeight: 30,
-    clickVerifyDelay: 600,        // Wait this long after click to verify dismissal
-    clickRetryAttempts: 3,        // Max click retries before CSS fallback
-    spaCheckInterval: 1000,       // How often to check for SPA navigation
-    observerReactivateDelay: 2000, // Delay before reactivating observer after SPA nav
+    maxContainerTextLength: 8000, // Banners are short; app shells are not
+    maxWallTextLength: 3000,      // Same, for near-fullscreen containers
+    maxAncestorWalk: 12,
+    maxTextAnchors: 40,
+    spaRearmDelay: 1000,
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // CMP-SPECIFIC SELECTORS (Direct ID/class targeting for known platforms)
+  // CMP-SPECIFIC ACCEPT BUTTONS (priority order)
   // ═══════════════════════════════════════════════════════════════════════════
 
   const CMP_ACCEPT_SELECTORS = [
@@ -54,7 +60,6 @@
     // Didomi
     "#didomi-notice-agree-button",
     "[data-testid='didomi-notice-agree-button']",
-    ".didomi-continue-without-agreeing",
     // Quantcast Choice
     ".qc-cmp2-summary-buttons button[mode='primary']",
     "[data-tracking-opt-in-accept]",
@@ -66,7 +71,6 @@
     // Usercentrics
     "#uc-btn-accept-banner",
     "[data-testid='uc-accept-all-button']",
-    "button[data-testid='uc-accept-all-button']",
     // CookieYes
     ".cky-btn-accept",
     "[data-cky-tag='accept-button']",
@@ -81,8 +85,8 @@
     "#BorlabsCookieBoxWrap .cookie-accept-all",
     "a._brlbs-btn-accept-all",
     // Klaro
-    ".klaro .cm-btn-accept",
     ".klaro .cm-btn-accept-all",
+    ".klaro .cm-btn-accept",
     ".cn-set-cookie[data-cookie-set='accept']",
     // Iubenda
     ".iubenda-cs-accept-btn",
@@ -113,7 +117,10 @@
     "[data-accept-all]",
     // Admiral
     ".admiral-cmp-accept",
-    // Sourcepoint (non-iframe)
+    // Sourcepoint (runs in its own iframe; this script runs there too)
+    ".sp_choice_type_11",
+    "button.sp_choice_type_ACCEPT_ALL",
+    "[data-choice-type='11']",
     "button[title='Accept all']",
     "button[title='Accept All']",
     "button[title='ACCEPT ALL']",
@@ -131,9 +138,8 @@
     // Drupal EU Cookie Compliance
     ".eu-cookie-compliance-default-button",
     ".agree-button",
-    // TYPO3 Cookie Consent
+    // TYPO3 Cookie Consent / Cookie Consent by Insites
     ".cc-compliance .cc-btn.cc-allow",
-    // Cookie Consent by Insites
     ".cc-btn.cc-allow",
     ".cc-btn.cc-dismiss",
     // Tarteaucitron
@@ -142,14 +148,14 @@
     "#tarteaucitronAllAllowed",
     // Sirdata
     "#sd-cmp button.sd-cmp-3cRQ2",
-    // Google Consent (FC)
+    // Google Funding Choices
     ".fc-button.fc-cta-consent",
     ".fc-cta-consent",
     // Google's own consent
     "[aria-label='Accept all']",
     "button[jsname='b3VHJd']",
     // Yahoo consent
-    "[name='agree']",
+    "button[name='agree']",
     ".consent-form .accept-all",
     // Microsoft / Bing
     "#bnp_btn_accept",
@@ -157,8 +163,6 @@
     // Stack Overflow / Stack Exchange
     ".js-accept-cookies",
     ".js-consent-banner-accept",
-    // Reddit
-    "._1tI68pPnLBjR1iHcL7vsee button",
     // Orejime
     ".orejime-Button--save",
     // CookieHub
@@ -177,23 +181,27 @@
     ".unic-consent .unic-btn-accept",
     // Crownpeak
     "#cpDivBtnAcceptAll",
+    // Generic IAB TCF / LGPD
+    ".cookie-banner-lgpd_accept-button",
+    "[data-lgpd-accept]",
+    ".consent-accept-all",
+    ".cmp-accept-all",
+    "#cmp-btn-accept",
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // CMP CONTAINER SELECTORS
+  // CMP CONTAINERS (used for verification and the CSS fallback target)
   // ═══════════════════════════════════════════════════════════════════════════
 
   const CMP_CONTAINER_SELECTORS = [
     "#onetrust-banner-sdk",
     "#onetrust-consent-sdk",
     "#CybotCookiebotDialog",
-    "#CybotCookiebotDialogBody",
     "#didomi-host",
     "#didomi-popup",
     ".qc-cmp2-container",
     "#qcCmpUi",
     "#truste-consent-track",
-    "#truste_overlay",
     "#usercentrics-root",
     ".cky-consent-container",
     ".osano-cm-dialog",
@@ -216,7 +224,7 @@
     ".fc-consent-root",
     "#consent-bump",
     "#sp-cc",
-    ".evidon-consent-button",
+    "div[id^='sp_message_container_']",
     "#cookie-law-info-bar",
     ".cc-window",
     ".cc-banner",
@@ -232,115 +240,78 @@
     ".cookie-popup",
     ".gdpr-banner",
     "#gdpr-banner",
-    ".privacy-banner",
-    "#privacy-banner",
     ".consent-banner",
     "#consent-banner",
     ".ch2-container",
     "#ch2-dialog",
     ".orejime-Notice",
-    "[class*='cookie-banner']",
-    "[class*='cookie-consent']",
-    "[class*='cookieBanner']",
-    "[class*='cookieConsent']",
-    "[class*='consent-banner']",
-    "[class*='gdpr']",
-    "[id*='cookie-banner']",
-    "[id*='cookie-consent']",
-    "[id*='cookieBanner']",
-    "[id*='cookieConsent']",
-    "[id*='consent-banner']",
-    "[id*='gdpr']",
-    "[aria-label*='cookie' i]",
-    "[aria-label*='consent' i]",
-    "[role='dialog'][aria-label*='cookie' i]",
-    "[role='dialog'][aria-label*='privacy' i]",
-    "[role='alertdialog']",
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
   // CSS FALLBACK RULES (hide banners when clicks fail)
   // ═══════════════════════════════════════════════════════════════════════════
 
+  const CSS_HIDE_SELECTORS = [
+    "#onetrust-banner-sdk", "#onetrust-consent-sdk", ".onetrust-pc-dark-filter",
+    "#CybotCookiebotDialog", "#CybotCookiebotDialogBodyUnderlay",
+    "#didomi-host", "#didomi-popup", ".didomi-popup-backdrop",
+    ".qc-cmp2-container", "#qcCmpUi", ".qc-cmp2-overlay",
+    "#truste-consent-track", "#truste_overlay", ".truste_overlay", ".truste_box_overlay",
+    "#usercentrics-root",
+    ".cky-consent-container", ".cky-overlay",
+    ".osano-cm-dialog", ".osano-cm-window", ".osano-cm-overlay",
+    ".cmplz-cookiebanner",
+    "#BorlabsCookieBox",
+    "#iubenda-cs-banner",
+    ".t-consentPrompt",
+    "#hs-eu-cookie-confirmation",
+    "#cmpbox", "#cmpbox2", ".cmpboxBGoverlay", ".cmpboxoverlay",
+    "#cookie-notice", ".cookie-notice-container",
+    "#moove_gdpr_cookie_info_bar",
+    "#cookiescript_injected",
+    "#tarteaucitron", "#tarteaucitronRoot",
+    "#sd-cmp",
+    ".fc-consent-root",
+    "#consent-bump",
+    "#sp-cc",
+    "div[id^='sp_message_container_']",
+    "#cookie-law-info-bar",
+    ".cc-window", ".cc-banner", ".cc-overlay",
+    "#gdpr-cookie-message",
+    "#cookie-popup",
+    ".ch2-container", "#ch2-dialog",
+    ".orejime-Notice",
+    "[data-idgac-hidden]",
+  ];
+
   const CSS_HIDE_RULES = `
-    #onetrust-banner-sdk,
-    #onetrust-consent-sdk,
-    #CybotCookiebotDialog,
-    #CybotCookiebotDialogBody,
-    .CybotCookiebotDialogActive,
-    #didomi-host,
-    #didomi-popup,
-    .qc-cmp2-container,
-    #qcCmpUi,
-    #truste-consent-track,
-    #truste_overlay,
-    .cky-consent-container,
-    .osano-cm-dialog,
-    .osano-cm-window,
-    .cmplz-cookiebanner,
-    #BorlabsCookieBox,
-    #iubenda-cs-banner,
-    .t-consentPrompt,
-    #hs-eu-cookie-confirmation,
-    #cmpbox,
-    #cmpbox2,
-    #cookie-notice,
-    .cookie-notice-container,
-    #moove_gdpr_cookie_info_bar,
-    #cookiescript_injected,
-    #tarteaucitron,
-    #sd-cmp,
-    .fc-consent-root,
-    #consent-bump,
-    #sp-cc,
-    .evidon-consent-button,
-    #cookie-law-info-bar,
-    .cc-window,
-    .cc-banner,
-    #gdpr-cookie-message,
-    #cookie-popup,
-    .ch2-container,
-    #ch2-dialog,
-    .orejime-Notice {
+    ${CSS_HIDE_SELECTORS.join(",\n    ")} {
       display: none !important;
       visibility: hidden !important;
-      opacity: 0 !important;
       pointer-events: none !important;
-      height: 0 !important;
-      overflow: hidden !important;
-    }
-    /* Remove overlay/backdrop that blocks page interaction */
-    #onetrust-consent-sdk ~ div[class*='overlay'],
-    .cmpboxBGoverlay,
-    .cmpboxoverlay,
-    #truste_overlay,
-    .qc-cmp2-overlay,
-    .didomi-popup-backdrop,
-    .osano-cm-overlay,
-    .cc-overlay,
-    body.cmplz-blocked,
-    body.cookies-not-accepted,
-    body.cookie-consent-active {
-      overflow: auto !important;
-    }
-    body.cmplz-blocked,
-    body.cookies-not-accepted {
-      position: static !important;
-      overflow: auto !important;
     }
   `;
+
+  // Classes CMPs put on <html>/<body> to lock scrolling
+  const SCROLL_LOCK_CLASSES = [
+    "modal-open", "no-scroll", "noscroll", "overflow-hidden",
+    "cookie-consent-active", "cmplz-blocked", "cookies-not-accepted",
+    "gdpr-active", "didomi-popup-open", "sp-message-open",
+    "ot-overflow-hidden", "cmp-open", "cky-modal-open",
+  ];
 
   // ═══════════════════════════════════════════════════════════════════════════
   // MULTILINGUAL ACCEPT KEYWORDS
   // ═══════════════════════════════════════════════════════════════════════════
 
+  // Matched as whole words/phrases anywhere in the button text.
   const ACCEPT_PHRASES_STRONG = [
     // English
     "accept all", "accept all cookies", "allow all", "allow all cookies",
     "agree to all", "i agree", "yes, i agree", "agree and continue",
     "i accept", "yes, i accept", "accept & continue", "accept and continue",
     "accept and close", "allow and close", "agree & close",
-    "accept recommended", "accept suggested",
+    "accept recommended", "accept suggested", "accept cookies", "allow cookies",
     // French
     "accepter tout", "tout accepter", "accepter tous les cookies",
     "accepter tous", "j'accepte", "autoriser tout", "tout autoriser",
@@ -349,7 +320,7 @@
     "alle akzeptieren", "alle cookies akzeptieren", "alles akzeptieren",
     "alle annehmen", "ich stimme zu", "akzeptieren und weiter",
     "alle zulassen", "zustimmen und weiter", "einverstanden",
-    "allen cookies zustimmen", "cookies akzeptieren",
+    "allen cookies zustimmen", "cookies akzeptieren", "alle erlauben",
     // Spanish
     "aceptar todo", "aceptar todas", "aceptar todas las cookies",
     "aceptar todos", "acepto", "estoy de acuerdo", "aceptar y continuar",
@@ -360,6 +331,7 @@
     // Portuguese
     "aceitar tudo", "aceitar todos", "aceitar todos os cookies",
     "aceito", "concordo", "aceitar e continuar", "aceitar e fechar",
+    "permitir todos",
     // Dutch
     "alles accepteren", "alle cookies accepteren", "accepteren",
     "ik ga akkoord", "alles toestaan", "akkoord",
@@ -396,10 +368,8 @@
     // Japanese
     "すべて許可", "すべて受け入れる", "全て許可", "すべてのcookieを許可",
     "すべて同意",
-    // Chinese (Simplified)
+    // Chinese
     "全部接受", "接受所有", "接受所有cookie", "全部允许",
-    // Chinese (Traditional)
-    "全部接受", "接受所有cookie",
     // Korean
     "모두 수락", "모두 허용", "모든 쿠키 수락",
     // Arabic
@@ -414,68 +384,47 @@
     "सभी स्वीकार करें",
   ];
 
+  // Matched as whole words anywhere in the button text ("Accept", "Yes, accept").
   const ACCEPT_PHRASES_GENERIC = [
-    // English
-    "accept", "agree", "allow", "consent", "i consent", "ok", "okay",
-    "got it", "understood", "yes", "continue", "confirm", "close",
-    "dismiss", "acknowledge",
-    // French
-    "accepter", "j'accepte", "autoriser", "d'accord", "j'ai compris",
-    "continuer", "fermer",
-    // German
-    "akzeptieren", "zustimmen", "erlauben", "einverstanden",
-    "verstanden", "weiter", "schließen",
-    // Spanish
-    "aceptar", "acepto", "de acuerdo", "permitir", "continuar",
-    "entendido", "cerrar",
-    // Italian
-    "accetta", "accetto", "va bene", "sono d'accordo", "consento",
-    "chiudi", "continua",
-    // Portuguese
-    "aceitar", "aceito", "concordo", "permitir", "entendi",
-    "continuar", "fechar",
-    // Dutch
-    "accepteren", "akkoord", "toestaan", "begrepen", "sluiten",
-    // Polish
-    "akceptuję", "akceptuj", "zgadzam się", "zamknij", "rozumiem",
-    // Swedish
-    "acceptera", "godkänn", "tillåt", "jag förstår", "stäng",
-    // Danish
-    "accepter", "tillad", "forstået", "luk",
-    // Norwegian
-    "aksepter", "godta", "forstått", "lukk",
-    // Finnish
-    "hyväksy", "salli", "ymmärrän", "sulje",
-    // Czech
-    "přijmout", "souhlasím", "rozumím", "zavřít",
-    // Romanian
-    "accept", "acceptă", "sunt de acord", "închide",
-    // Hungarian
-    "elfogadom", "elfogad", "rendben", "bezár",
-    // Greek
-    "αποδοχή", "αποδέχομαι", "συμφωνώ", "κλείσιμο", "εντάξει",
-    // Turkish
-    "kabul et", "kabul ediyorum", "tamam", "kapat",
-    // Russian
-    "принять", "принимаю", "согласен", "хорошо", "закрыть",
-    // Ukrainian
-    "прийняти", "приймаю", "погоджуюсь", "закрити",
-    // Japanese
-    "同意する", "承認", "許可", "閉じる",
-    // Chinese
-    "同意", "我同意", "接受", "确定", "关闭",
-    // Korean
-    "동의합니다", "수락", "동의", "확인", "닫기",
-    // Arabic
-    "أوافق", "موافق", "قبول", "إغلاق",
-    // Thai
-    "ยอมรับ", "ตกลง",
-    // Vietnamese
+    "accept", "agree", "allow", "consent", "i consent", "got it",
+    "understood", "acknowledge",
+    "accepter", "autoriser", "d'accord", "j'ai compris",
+    "akzeptieren", "zustimmen", "erlauben", "verstanden",
+    "aceptar", "de acuerdo", "permitir", "entendido",
+    "accetta", "va bene", "sono d'accordo", "consento",
+    "aceitar", "entendi",
+    "toestaan", "begrepen",
+    "akceptuję", "akceptuj", "rozumiem",
+    "acceptera", "godkänn", "tillåt", "jag förstår",
+    "accepter", "tillad", "forstået",
+    "aksepter", "godta", "forstått",
+    "hyväksy", "salli", "ymmärrän",
+    "přijmout", "souhlasím", "rozumím",
+    "acceptă", "sunt de acord",
+    "elfogadom", "elfogad", "rendben",
+    "αποδοχή", "αποδέχομαι", "συμφωνώ",
+    "kabul et", "kabul ediyorum",
+    "принять", "принимаю", "согласен",
+    "прийняти", "приймаю", "погоджуюсь",
+    "同意する", "承認", "許可",
+    "同意", "我同意", "接受",
+    "동의합니다", "수락", "동의",
+    "أوافق", "موافق", "قبول",
+    "ยอมรับ",
     "chấp nhận", "đồng ý",
-    // Indonesian
     "terima", "setuju",
-    // Hindi
     "स्वीकार करें", "सहमत",
+  ];
+
+  // Too ambiguous to match inside longer text: only accepted when the
+  // button text is exactly this word ("OK", "Close", "Continue").
+  const ACCEPT_WORDS_EXACT_ONLY = [
+    "ok", "okay", "yes", "continue", "confirm", "close", "dismiss",
+    "fermer", "continuer", "weiter", "schließen", "continuar", "cerrar",
+    "chiudi", "continua", "fechar", "sluiten", "zamknij", "stäng", "luk",
+    "lukk", "sulje", "zavřít", "închide", "bezár", "κλείσιμο", "εντάξει",
+    "tamam", "kapat", "хорошо", "закрыть", "закрити", "閉じる", "确定",
+    "关闭", "확인", "닫기", "إغلاق", "ตกลง",
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -486,160 +435,251 @@
     // English
     "manage", "preferences", "settings", "customize", "customise",
     "learn more", "more info", "more information", "details",
-    "reject", "decline", "deny", "refuse", "only necessary",
-    "necessary only", "necessary cookies only", "essential only",
-    "cookie policy", "privacy policy", "read more", "show purposes",
-    "manage options", "manage settings", "manage preferences",
-    "cookie settings", "privacy settings", "do not sell",
-    "opt out", "opt-out", "save preferences", "save settings",
+    "reject", "decline", "deny", "refuse", "disagree", "do not agree",
+    "don't agree", "only necessary", "necessary only",
+    "necessary cookies only", "essential only", "continue without",
+    "without accepting", "cookie policy", "privacy policy", "read more",
+    "show purposes", "manage options", "cookie settings", "privacy settings",
+    "do not sell", "opt out", "opt-out", "save preferences", "save settings",
     "confirm choices", "confirm my choices", "save my choices",
+    "cancel", "delete", "remove", "subscribe", "sign in", "sign up",
+    "log in", "login", "register", "pay", "buy", "purchase", "checkout",
+    "no thanks", "not now",
     // French
     "paramétrer", "paramètres", "personnaliser", "en savoir plus",
     "refuser", "gérer", "plus d'informations", "politique de cookies",
+    "continuer sans accepter", "sans accepter", "annuler", "s'abonner",
     // German
     "einstellungen", "anpassen", "mehr erfahren", "ablehnen",
     "verwalten", "nur notwendige", "nur erforderliche",
-    "cookie-einstellungen", "datenschutzerklärung",
+    "cookie-einstellungen", "datenschutzerklärung", "abbrechen",
+    "abonnieren", "ohne zustimmung",
     // Spanish
     "configurar", "personalizar", "más información", "rechazar",
-    "gestionar", "solo necesarias", "configuración de cookies",
+    "gestionar", "solo necesarias", "configuración de cookies", "cancelar",
     // Italian
     "impostazioni", "personalizza", "maggiori informazioni", "rifiuta",
-    "gestisci", "solo necessari",
+    "gestisci", "solo necessari", "annulla",
+    // Portuguese
+    "configurações", "definições", "rejeitar", "recusar", "gerenciar",
     // Dutch
     "instellingen", "aanpassen", "meer informatie", "weigeren",
     "beheren", "alleen noodzakelijk",
     // Polish
     "ustawienia", "dostosuj", "więcej informacji", "odrzuć",
     "zarządzaj", "tylko niezbędne",
+    // Nordic
+    "avvisa", "afvis", "avslå", "hylkää", "inställningar", "indstillinger",
     // Turkish
     "ayarlar", "özelleştir", "daha fazla bilgi", "reddet",
     "yönet", "sadece gerekli",
-    // Russian
+    // Russian / Ukrainian
     "настройки", "настроить", "подробнее", "отклонить",
-    "управлять", "только необходимые",
+    "управлять", "только необходимые", "відхилити", "налаштування",
+    // CJK (matched as substrings, so the negated forms of "agree" matter)
+    "拒否", "設定", "同意しない", "拒绝", "设置", "不同意", "不接受",
+    "거부", "설정", "동의하지 않",
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // COOKIE CONTEXT KEYWORDS (text that indicates a cookie banner)
+  // COOKIE CONTEXT (text that indicates a cookie/consent banner)
   // ═══════════════════════════════════════════════════════════════════════════
 
+  // Deliberately excludes generic words like "privacy", "terms" or "tracking":
+  // those also appear in sign-up and Terms-of-Service dialogs, which we must
+  // never answer on the user's behalf.
   const COOKIE_CONTEXT_KEYWORDS = [
-    // English
-    "cookie", "cookies", "consent", "gdpr", "privacy", "data protection",
-    "personal data", "tracking", "analytics", "advertising cookies",
-    "functional cookies", "performance cookies", "third party",
-    "third-party", "we use cookies", "this site uses cookies",
-    "this website uses cookies", "browsing experience",
-    // French
-    "cookies", "consentement", "confidentialité", "données personnelles",
-    "nous utilisons des cookies", "ce site utilise des cookies",
-    // German
-    "cookies", "einwilligung", "datenschutz", "personenbezogene daten",
-    "wir verwenden cookies", "diese website verwendet cookies",
-    "diese seite verwendet cookies",
-    // Spanish
-    "cookies", "consentimiento", "privacidad", "datos personales",
-    "utilizamos cookies", "este sitio utiliza cookies",
-    // Italian
-    "cookie", "consenso", "privacy", "dati personali",
-    "utilizziamo i cookie", "questo sito utilizza cookie",
-    // Portuguese
-    "cookies", "consentimento", "privacidade", "dados pessoais",
-    "utilizamos cookies", "este site utiliza cookies",
-    // Dutch
-    "cookies", "toestemming", "privacy", "persoonsgegevens",
-    "wij gebruiken cookies", "deze website gebruikt cookies",
-    // Polish
-    "ciasteczka", "pliki cookie", "zgoda", "prywatność",
-    "dane osobowe", "używamy plików cookie",
-    // Swedish
-    "kakor", "cookies", "samtycke", "integritet",
-    // Danish
-    "cookies", "samtykke", "privatlivspolitik",
-    // Norwegian
-    "informasjonskapsler", "samtykke", "personvern",
-    // Finnish
-    "evästeet", "suostumus", "tietosuoja",
-    // Czech
-    "soubory cookie", "souhlas", "ochrana osobních údajů",
-    // Hungarian
-    "sütik", "cookie-k", "hozzájárulás", "adatvédelem",
-    // Turkish
-    "çerez", "çerezler", "cerez", "cerezler", "onay", "gizlilik",
-    "kişisel veri",
-    // Russian
-    "куки", "файлы cookie", "согласие", "конфиденциальность",
-    "персональные данные",
-    // Ukrainian
-    "файли cookie", "згода", "конфіденційність",
-    // Japanese
-    "クッキー", "cookie", "同意", "プライバシー",
-    // Chinese
-    "cookie", "隐私", "同意", "个人数据", "数据保护",
-    // Korean
-    "쿠키", "동의", "개인정보",
-    // Arabic
-    "ملفات تعريف الارتباط", "كوكيز", "الخصوصية", "موافقة",
-    // Thai
-    "คุกกี้", "ความยินยอม", "ความเป็นส่วนตัว",
-    // Vietnamese
-    "cookie", "quyền riêng tư", "đồng ý",
-    // Indonesian
-    "cookie", "privasi", "persetujuan",
-    // Hindi
-    "कुकी", "गोपनीयता", "सहमति",
+    "cookie", "consent", "gdpr", "store and/or access information",
+    "similar technologies", "we and our partners",
+    "consentement", "traceurs", "stocker et/ou accéder",
+    "einwilligung", "speichern und/oder", "wir und unsere partner",
+    "consentimiento", "almacenar y/o acceder",
+    "consenso", "archiviare e/o accedere",
+    "consentimento", "armazenar e/ou aceder",
+    "toestemming",
+    "ciasteczk", "pliki cookie", "plików cookie",
+    "kakor", "samtycke", "samtykke", "informasjonskapsler",
+    "eväste", "suostumus",
+    "soubory cookie",
+    "sütik", "süti",
+    "çerez", "cerez",
+    "куки", "файлы cookie", "файли cookie",
+    "クッキー",
+    "쿠키",
+    "ملفات تعريف الارتباط", "كوكيز",
+    "คุกกี้",
+    "कुकी",
   ];
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // AVOID KEYWORDS (pages where we should NOT act)
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  const AVOID_KEYWORDS = [
-    "captcha", "recaptcha", "i'm not a robot", "i am not a robot",
-    "verify you are human", "prove you're human", "human verification",
-    "robot verification", "security check", "access denied",
-    "please verify", "challenge", "hcaptcha",
+  // id/class fragments that mark an element as a consent container.
+  // Not "cmp" (Adobe AEM prefixes every component with cmp-) and not
+  // "privacy"/"banner"/"notice" (far too common on ordinary page chrome).
+  const CONTAINER_HINTS = [
+    "cookie", "consent", "gdpr", "dsgvo", "rgpd", "ccpa", "eprivacy",
+    "cerez", "çerez", "consentement",
   ];
 
-  // Domains where ONLY CMP-specific selectors should be used (no heuristics)
-  // These are sites known to cause redirect loops with generic button detection
+  // Challenge pages and widgets we must never touch
+  const CAPTCHA_WIDGET_SELECTOR =
+    ".g-recaptcha, .h-captcha, .cf-turnstile, [data-sitekey], " +
+    "iframe[src*='recaptcha'], iframe[src*='hcaptcha'], iframe[src*='challenges.cloudflare.com']";
+  const CHALLENGE_PAGE_SELECTOR =
+    "#challenge-form, #challenge-stage, #cf-challenge-running, .cf-browser-verification";
+  const CAPTCHA_TEXT = [
+    "captcha", "i'm not a robot", "i am not a robot", "verify you are human",
+    "prove you're human", "human verification", "robot verification",
+  ];
+
+  // Sites where only CMP-specific selectors are used (no heuristics).
+  // Kept as a belt-and-braces guard for sites that historically looped.
   const CMP_ONLY_DOMAINS = [
-    "x.com", "twitter.com",       // Grok redirect issue
-    "nytimes.com",                // Cooking redirect issue
-    "vimeo.com",                  // Legal page loop
+    "x.com", "twitter.com",
+    "nytimes.com",
+    "vimeo.com",
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // UTILITY FUNCTIONS
+  // TEXT MATCHING
   // ═══════════════════════════════════════════════════════════════════════════
+
+  // Scripts written without spaces between words: match them as plain
+  // substrings. Everything else is matched on word boundaries, so "ok" no
+  // longer matches "Book now" and "agree" no longer matches "disagree".
+  const NO_SPACE_SCRIPT = /[฀-๿぀-ヿ㐀-鿿豈-﫿가-힯]/;
+  const WORD_CHAR =
+    "[\\p{Script=Latin}\\p{Script=Cyrillic}\\p{Script=Greek}\\p{Script=Arabic}" +
+    "\\p{Script=Hebrew}\\p{Script=Devanagari}\\p{M}\\p{N}]";
+
+  function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  }
+
+  // mode: "word" (both boundaries), "prefix" (start boundary only), "exact"
+  function compileMatcher(keywords, mode) {
+    const unique = [...new Set(keywords.map((k) => normalizeText(k)))]
+      .sort((a, b) => b.length - a.length)
+      .map(escapeRegExp);
+    if (mode === "exact") return new RegExp(`^(?:${unique.join("|")})$`, "u");
+    const spaced = [];
+    const unspaced = [];
+    for (const kw of unique) (NO_SPACE_SCRIPT.test(kw) ? unspaced : spaced).push(kw);
+    const tail = mode === "word" ? `(?!${WORD_CHAR})` : "";
+    const parts = [];
+    if (spaced.length) parts.push(`(?<!${WORD_CHAR})(?:${spaced.join("|")})${tail}`);
+    if (unspaced.length) parts.push(`(?:${unspaced.join("|")})`);
+    return new RegExp(parts.join("|"), "u");
+  }
 
   function normalizeText(text) {
-    return (text || "").toLowerCase().replace(/\s+/g, " ").trim();
+    return (text || "")
+      .toLowerCase()
+      .replace(/[‘’ʼ]/g, "'")
+      .replace(/\s+/g, " ")
+      .trim();
   }
 
-  function containsAny(text, keywords) {
-    const t = normalizeText(text);
-    return keywords.some((kw) => t.includes(kw.toLowerCase()));
+  const RE_STRONG = compileMatcher(ACCEPT_PHRASES_STRONG, "word");
+  const RE_GENERIC = compileMatcher(ACCEPT_PHRASES_GENERIC, "word");
+  const RE_EXACT = compileMatcher([...ACCEPT_PHRASES_GENERIC, ...ACCEPT_WORDS_EXACT_ONLY], "exact");
+  const RE_NEGATIVE = compileMatcher(NEGATIVE_KEYWORDS, "prefix");
+  const RE_CONTEXT = compileMatcher(COOKIE_CONTEXT_KEYWORDS, "prefix");
+  const RE_CAPTCHA = compileMatcher(CAPTCHA_TEXT, "word");
+  const RE_HINT = new RegExp(CONTAINER_HINTS.map(escapeRegExp).join("|"), "i");
+  const RE_LEGAL_TEXT = compileMatcher([
+    "agreement", "terms of service", "terms of use", "viewer agreement",
+    "privacy notice", "legal notice", "end user license",
+    "nutzungsbedingungen", "allgemeine geschäftsbedingungen",
+    "conditions d'utilisation", "mentions légales",
+  ], "prefix");
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SITE IDENTITY & SETTINGS
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const IS_TOP = window.top === window;
+
+  function normalizeHost(host) {
+    return (host || "").toLowerCase().replace(/^www\./, "");
   }
 
-  function matchesExact(text, keywords) {
-    const t = normalizeText(text);
-    return keywords.some((kw) => t === kw.toLowerCase());
+  // State, stats and the blocklist are keyed by the *top-level* site, so a
+  // CMP iframe (Sourcepoint, TrustArc…) is attributed to the page it's on.
+  function topLevelHostname() {
+    if (IS_TOP) return location.hostname;
+    try {
+      const origins = location.ancestorOrigins;
+      if (origins && origins.length) return new URL(origins[origins.length - 1]).hostname;
+    } catch (e) { /* fall through */ }
+    try {
+      return window.top.location.hostname; // same-origin parents only
+    } catch (e) {
+      return location.hostname;
+    }
   }
+
+  const SITE = normalizeHost(topLevelHostname());
+
+  function hostMatches(site, pattern) {
+    const p = normalizeHost(pattern);
+    return !!p && (site === p || site.endsWith("." + p));
+  }
+
+  const settings = { enabled: true, blocked: false };
+
+  function applyBlocklist(list) {
+    settings.blocked = Array.isArray(list) && list.some((p) => hostMatches(SITE, p));
+  }
+
+  function canRun() {
+    return settings.enabled && !settings.blocked && extensionAlive();
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // EXTENSION PLUMBING
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // After the extension is reloaded/updated, orphaned content scripts keep
+  // running with a dead chrome.runtime. Detect that and shut down cleanly.
+  function extensionAlive() {
+    try {
+      return !!(chrome.runtime && chrome.runtime.id);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function sendToBackground(action, data = {}) {
+    return new Promise((resolve) => {
+      if (!extensionAlive()) return resolve(null);
+      try {
+        chrome.runtime.sendMessage({ action, site: SITE, ...data }, (response) => {
+          void chrome.runtime.lastError; // background may be asleep; not an error
+          resolve(response || null);
+        });
+      } catch (e) {
+        resolve(null);
+      }
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // DOM UTILITIES
+  // ═══════════════════════════════════════════════════════════════════════════
 
   function isVisible(el) {
-    if (!el) return false;
-    if (!el.isConnected) return false;
+    if (!el || !el.isConnected) return false;
     try {
-      const style = window.getComputedStyle(el);
-      if (
-        style.display === "none" ||
-        style.visibility === "hidden" ||
-        style.opacity === "0" ||
-        (style.clip === "rect(0px, 0px, 0px, 0px)" && style.position === "absolute")
-      ) {
-        return false;
+      if (typeof el.checkVisibility === "function") {
+        const ok = el.checkVisibility({
+          opacityProperty: true, visibilityProperty: true, // current names
+          checkOpacity: true, checkVisibilityCSS: true,    // older Chrome
+        });
+        if (!ok) return false;
+      } else {
+        const style = getComputedStyle(el);
+        if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") {
+          return false;
+        }
       }
       const rect = el.getBoundingClientRect();
       return rect.width > 0 && rect.height > 0;
@@ -648,1222 +688,719 @@
     }
   }
 
-  function isInViewport(el) {
-    try {
-      const rect = el.getBoundingClientRect();
-      const vw = window.innerWidth || document.documentElement.clientWidth;
-      const vh = window.innerHeight || document.documentElement.clientHeight;
-      return (
-        rect.top < vh + 100 &&
-        rect.bottom > -100 &&
-        rect.left < vw + 100 &&
-        rect.right > -100
-      );
-    } catch (e) {
-      return false;
-    }
+  function parentOf(el) {
+    if (el.parentElement) return el.parentElement;
+    const root = el.getRootNode && el.getRootNode();
+    return root && root.host ? root.host : null; // cross shadow boundary
   }
 
-  function debounce(fn, delay) {
-    let timer = null;
-    return function (...args) {
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        timer = null;
-        fn.apply(this, args);
-      }, delay);
-    };
+  function classAndId(el) {
+    return ((el.id || "") + " " + ((el.getAttribute && el.getAttribute("class")) || "")).toLowerCase();
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // SHADOW DOM TRAVERSAL
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  function querySelectorAllDeep(selector, root = document, maxDepth = 3) {
-    const results = [];
-    if (maxDepth <= 0) return results;
-
-    try {
-      const found = root.querySelectorAll(selector);
-      found.forEach((el) => results.push(el));
-    } catch (e) { /* invalid selector */ }
-
-    // Traverse shadow DOMs (with depth limit to prevent infinite recursion)
-    try {
-      const allElements = root.querySelectorAll("*");
-      for (const el of allElements) {
-        if (el.shadowRoot) {
-          const shadowResults = querySelectorAllDeep(selector, el.shadowRoot, maxDepth - 1);
-          shadowResults.forEach((r) => results.push(r));
-        }
-      }
-    } catch (e) { /* skip */ }
-
-    return results;
+  function isToggle(el) {
+    const type = ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase();
+    const role = ((el.getAttribute && el.getAttribute("role")) || "").toLowerCase();
+    return type === "checkbox" || type === "radio" || role === "checkbox" || role === "switch";
   }
 
-  function querySelectorDeep(selector, root = document, maxDepth = 3) {
-    if (maxDepth <= 0) return null;
-
-    try {
-      const found = root.querySelector(selector);
-      if (found) return found;
-    } catch (e) { /* skip */ }
-
-    try {
-      const allElements = root.querySelectorAll("*");
-      for (const el of allElements) {
-        if (el.shadowRoot) {
-          const found = querySelectorDeep(selector, el.shadowRoot, maxDepth - 1);
-          if (found) return found;
-        }
-      }
-    } catch (e) { /* skip */ }
-
-    return null;
+  function isDisabled(el) {
+    return el.disabled === true || (el.getAttribute && el.getAttribute("aria-disabled") === "true");
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // STATE MANAGEMENT
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  const STATE_KEY = "__IDGAC__" + window.location.hostname;
-  let clickCount = 0;
-  let hasBeenHandled = false;
-  let cssFallbackInjected = false;
-  let lastUrl = window.location.href;
-  let extensionEnabled = true;
-  let siteBlocked = false;
-
-  function markHandled() {
-    clickCount++;
-    if (clickCount >= CONFIG.maxClicksPerDomain) {
-      hasBeenHandled = true;
-    }
-    // Persist state
-    try {
-      if (chrome && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.set({
-          [STATE_KEY]: { count: clickCount, ts: Date.now() },
-        });
-      }
-    } catch (e) {
+  // Selectors are validated once so one bad entry can't break the joined query
+  function validSelectors(list) {
+    const probe = document.createDocumentFragment();
+    return list.filter((sel) => {
       try {
-        localStorage.setItem(STATE_KEY, JSON.stringify({ count: clickCount, ts: Date.now() }));
-      } catch (e2) { /* ignore */ }
+        probe.querySelector(sel);
+        return true;
+      } catch (e) {
+        logError("Invalid selector skipped:", sel);
+        return false;
+      }
+    });
+  }
+
+  const ACCEPT_SELECTORS = validSelectors(CMP_ACCEPT_SELECTORS);
+  const ACCEPT_SELECTOR_JOINED = ACCEPT_SELECTORS.join(",");
+  const CONTAINER_SELECTOR_JOINED = validSelectors(CMP_CONTAINER_SELECTORS).join(",");
+
+  // One pass over the tree to find open (and, via chrome.dom, closed) shadow
+  // roots. Replaces the old per-selector querySelectorAll("*") walks.
+  function collectRoots(start = document) {
+    const roots = [start];
+    const openOrClosed = (() => {
+      try {
+        return chrome.dom && chrome.dom.openOrClosedShadowRoot;
+      } catch (e) {
+        return null;
+      }
+    })();
+    if (start.shadowRoot) roots.push(start.shadowRoot); // start may itself be a host
+    for (let i = 0; i < roots.length && roots.length < 100; i++) {
+      const walker = document.createTreeWalker(roots[i], NodeFilter.SHOW_ELEMENT);
+      for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+        let sr = n.shadowRoot;
+        if (!sr && openOrClosed && n.localName.includes("-")) {
+          try { sr = openOrClosed(n); } catch (e) { /* not a host */ }
+        }
+        if (sr) roots.push(sr);
+      }
     }
-    // Notify background script
-    notifyBackground("bannerDismissed", { hostname: window.location.hostname });
+    return roots;
   }
 
-  function loadState(callback) {
-    try {
-      if (chrome && chrome.storage && chrome.storage.local) {
-        chrome.storage.local.get([STATE_KEY, "blocklist", "debug"], (data) => {
-          if (chrome.runtime.lastError) {
-            callback();
-            return;
-          }
-          if (data && data[STATE_KEY]) {
-            const stored = data[STATE_KEY];
-            // Reset if older than 24 hours
-            if (stored.ts && Date.now() - stored.ts > 86400000) {
-              clickCount = 0;
-            } else {
-              clickCount = stored.count || 0;
-            }
-            if (clickCount >= CONFIG.maxClicksPerDomain) {
-              hasBeenHandled = true;
-            }
-          }
-          // Check blocklist
-          if (data && data.blocklist) {
-            const hostname = window.location.hostname;
-            if (Array.isArray(data.blocklist) && data.blocklist.some(
-              (pattern) => hostname === pattern || hostname.endsWith("." + pattern)
-            )) {
-              siteBlocked = true;
-            }
-          }
-          // Debug mode
-          if (data && data.debug) {
-            debugMode = true;
-          }
-          callback();
-        });
-        return;
-      }
-    } catch (e) { /* fallback */ }
-
-    // Fallback: localStorage
-    try {
-      const raw = localStorage.getItem(STATE_KEY);
-      if (raw) {
-        const stored = JSON.parse(raw);
-        if (stored.ts && Date.now() - stored.ts > 86400000) {
-          clickCount = 0;
-        } else {
-          clickCount = stored.count || 0;
-        }
-        if (clickCount >= CONFIG.maxClicksPerDomain) {
-          hasBeenHandled = true;
-        }
-      }
-    } catch (e) { /* ignore */ }
-    callback();
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // BACKGROUND COMMUNICATION
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  function notifyBackground(action, data = {}) {
-    try {
-      if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage({ action, ...data }, () => {
-          // Ignore errors (background may not be listening)
-          if (chrome.runtime.lastError) { /* expected */ }
-        });
-      }
-    } catch (e) { /* not in extension context */ }
-  }
-
-  // Listen for messages from background
-  try {
-    if (chrome && chrome.runtime && chrome.runtime.onMessage) {
-      chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-        if (msg.action === "reScan") {
-          // Background requested a re-scan (e.g., after SPA navigation)
-          // GOLD CODE PRINCIPLE: Respect domain acceptance lock
-          // Only reset if we haven't already handled this domain
-          if (clickCount > 0) {
-            log("reScan requested but domain already handled, ignoring");
-            sendResponse({ ok: true, skipped: true });
-          } else {
-            hasBeenHandled = false;
-            cssFallbackInjected = false;
-            scheduleRetries();
-            startObserver();
-            sendResponse({ ok: true });
-          }
-        } else if (msg.action === "getStatus") {
-          sendResponse({
-            handled: hasBeenHandled,
-            clicks: clickCount,
-            url: window.location.href,
-          });
-        } else if (msg.action === "toggleSite") {
-          siteBlocked = msg.blocked;
-          if (siteBlocked && cssFallbackInjected) {
-            removeCssFallback();
-          }
-          sendResponse({ ok: true });
-        }
-        return true; // Keep channel open for async response
-      });
+  function queryAllDeep(roots, selector) {
+    const out = [];
+    for (const root of roots) {
+      try {
+        out.push(...root.querySelectorAll(selector));
+      } catch (e) { /* skip */ }
     }
-  } catch (e) { /* not in extension context */ }
+    return out;
+  }
+
+  // Visible text of an element including its shadow tree (innerText skips
+  // shadow content, so append it explicitly).
+  function visibleText(el) {
+    let text = el.innerText || "";
+    try {
+      const inner = el.shadowRoot;
+      if (inner) for (const child of inner.children) text += " " + (child.innerText || "");
+    } catch (e) { /* skip */ }
+    return normalizeText(text);
+  }
+
+  function buttonText(el) {
+    const raw =
+      el.innerText || el.value || el.textContent ||
+      (el.getAttribute && (el.getAttribute("aria-label") || el.getAttribute("title"))) || "";
+    return normalizeText(raw);
+  }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TARGET VALIDATION
   // ═══════════════════════════════════════════════════════════════════════════
 
   function isBadTarget(el, text) {
-    const t = normalizeText(text);
+    if (!text || text.length > CONFIG.maxButtonTextLength) return true;
+    if (RE_NEGATIVE.test(text) || RE_LEGAL_TEXT.test(text)) return true;
+    if (isDisabled(el)) return true;
 
-    if (containsAny(t, NEGATIVE_KEYWORDS)) return true;
-    if (t.length > CONFIG.maxButtonTextLength) return true;
+    if (isToggle(el)) return true;
 
-    const tag = (el.tagName || "").toUpperCase();
-    const href = (el.getAttribute && el.getAttribute("href")) || "";
-    const lowerHref = href.toLowerCase();
+    try {
+      if (el.closest && el.closest(CAPTCHA_WIDGET_SELECTOR)) return true;
+    } catch (e) { /* skip */ }
 
-    // Block mailto/tel/sms
-    if (
-      lowerHref.startsWith("mailto:") ||
-      lowerHref.startsWith("tel:") ||
-      lowerHref.startsWith("sms:")
-    ) {
-      return true;
+    // Anchors: only button-like ones; real links navigate away.
+    if ((el.tagName || "").toUpperCase() === "A") {
+      const href = (el.getAttribute("href") || "").trim().toLowerCase();
+      return !(!href || href === "#" || href === "#!" || href.startsWith("javascript:"));
     }
-
-    // Block social media links
-    const socialDomains = [
-      "facebook.com", "instagram.com", "twitter.com", "x.com",
-      "linkedin.com", "youtube.com", "tiktok.com", "pinterest.com",
-    ];
-    if (href && socialDomains.some((d) => lowerHref.includes(d))) {
-      return true;
-    }
-
-    // Block policy/privacy/legal links
-    const policyPaths = [
-      "privacy", "cookie-policy", "cookies-policy", "/cookies",
-      "cookie_settings", "cookiepreferences", "cookie-preferences",
-      "/policy", "/terms", "/legal", "/datenschutz", "/impressum",
-      "/agreement", "/tos", "/eula", "/license", "service-terms",
-      "/nutzungsbedingungen", "/agb", "/mentions-legales",
-    ];
-    if (href && policyPaths.some((p) => lowerHref.includes(p))) {
-      return true;
-    }
-
-    // Block legal/agreement text that looks like navigation (Vimeo-style)
-    const legalTextPatterns = [
-      "agreement", "terms of service", "terms of use", "viewer agreement",
-      "privacy notice", "legal notice", "end user license",
-      "nutzungsbedingungen", "allgemeine geschäftsbedingungen",
-      "conditions d'utilisation", "mentions légales",
-    ];
-    if (containsAny(t, legalTextPatterns)) {
-      return true;
-    }
-
-    // For <a> tags, only allow button-like anchors
-    if (tag === "A" && href) {
-      const trimmed = href.trim().toLowerCase();
-      if (
-        trimmed === "#" ||
-        trimmed === "" ||
-        trimmed.startsWith("javascript:") ||
-        trimmed === "#!" ||
-        trimmed === "void(0)"
-      ) {
-        return false; // Looks like a JS button
-      }
-      return true; // Real navigation link
-    }
-
     return false;
   }
 
-  function isLikelyRobotPage() {
+  function isChallengePage() {
     try {
-      const bodyText = normalizeText(
-        (document.body && document.body.innerText) || ""
-      ).substring(0, 3000); // Only check first 3000 chars for performance
-      return containsAny(bodyText, AVOID_KEYWORDS);
+      if (/(^|\.)(hcaptcha\.com|challenges\.cloudflare\.com)$/.test(location.hostname)) return true;
+      if (location.pathname.includes("/recaptcha/")) return true;
+      return !!document.querySelector(CHALLENGE_PAGE_SELECTOR);
     } catch (e) {
       return false;
     }
   }
 
+  // Is this button part of a cookie/consent UI? Gates generic CMP selectors
+  // such as .agree-button or button[name='agree'], which also exist on
+  // sign-up forms. Deliberately does not look at <body>: a "Cookie policy"
+  // footer link must not make every button on the page eligible.
+  function hasConsentContext(el) {
+    let node = el;
+    for (let depth = 0; node && depth < CONFIG.maxAncestorWalk; depth++) {
+      if (node === document.body || node === document.documentElement) break;
+      if (RE_HINT.test(classAndId(node))) return true;
+      node = parentOf(node);
+    }
+    const box = floatingAncestor(el);
+    if (box && RE_CONTEXT.test(visibleText(box))) return true;
+    // Inside a CMP iframe (Sourcepoint, TrustArc…) the whole document is the banner
+    return !IS_TOP && RE_CONTEXT.test(normalizeText((document.body && document.body.innerText) || ""));
+  }
+
   // ═══════════════════════════════════════════════════════════════════════════
-  // STRATEGY 1: CMP-SPECIFIC SELECTORS
+  // STRATEGY 1: KNOWN CMP ACCEPT BUTTONS
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function tryCMPSelectors() {
-    for (const selector of CMP_ACCEPT_SELECTORS) {
-      try {
-        const el = querySelectorDeep(selector);
-        if (el && isVisible(el)) {
-          const text = normalizeText(el.innerText || el.value || el.textContent || "");
-          // Verify it's not a negative button
-          const rejectWords = [
-            "reject", "decline", "deny", "refuse", "ablehnen", "refuser",
-            "rechazar", "rifiuta", "weigeren", "odrzuć", "reddet", "отклонить",
-          ];
-          if (!containsAny(text, rejectWords)) {
-            return el;
-          }
-        }
-      } catch (e) { /* selector may be invalid in context */ }
+  function findCMPButton(roots) {
+    const hits = queryAllDeep(roots, ACCEPT_SELECTOR_JOINED);
+    if (!hits.length) return null;
+
+    for (const selector of ACCEPT_SELECTORS) {
+      for (const el of hits) {
+        try {
+          if (!el.matches(selector) || !isVisible(el) || isDisabled(el) || isToggle(el)) continue;
+          const text = buttonText(el);
+          if (text && RE_NEGATIVE.test(text)) continue;
+          if (!hasConsentContext(el)) continue;
+          return { el, container: closestContainer(el), strategy: `CMP selector ${selector}` };
+        } catch (e) { /* skip */ }
+      }
     }
     return null;
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // STRATEGY 1B: IAB TCF / CMP FRAMEWORK DETECTION
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  function tryIABTCFDetection() {
-    // Check if IAB TCF API is present (used by many publisher networks)
-    const hasIAB = !!(window.__tcfapi || window.__cmp || window.__gpp);
-    if (!hasIAB) return null;
-
-    log("IAB TCF/CMP framework detected");
-
-    // IAB-compliant CMPs typically render consent UIs with specific patterns
-    const iabSelectors = [
-      // Sourcepoint
-      "button[title='Accept all']", "button[title='Accept All']",
-      ".message-button.sp_choice_type_11",
-      "[data-choice-type='11']", // Sourcepoint accept-all choice type
-      // IAB generic
-      ".qc-cmp2-summary-buttons button[mode='primary']",
-      "[data-tracking-opt-in-accept]",
-      // Reach PLC / UK publishers
-      ".sp_choice_type_11",
-      "button.sp_choice_type_ACCEPT_ALL",
-      // Globo / MacMagazine style
-      ".cookie-banner-lgpd_accept-button",
-      "[data-lgpd-accept]",
-      // Generic IAB consent buttons
-      ".consent-accept-all",
-      ".cmp-accept-all",
-      "#cmp-btn-accept",
-      ".cmp__dialog__actions button:first-child",
-    ];
-
-    for (const selector of iabSelectors) {
+  function closestContainer(el) {
+    let node = el;
+    for (let depth = 0; node && depth < CONFIG.maxAncestorWalk; depth++) {
       try {
-        const el = querySelectorDeep(selector);
-        if (el && isVisible(el)) {
-          const text = normalizeText(el.innerText || el.value || "");
-          if (!containsAny(text, NEGATIVE_KEYWORDS.slice(0, 40))) {
-            return el;
-          }
-        }
+        if (node.matches && node.matches(CONTAINER_SELECTOR_JOINED)) return node;
       } catch (e) { /* skip */ }
+      if (node.parentElement === null && node.getRootNode && node.getRootNode().host) {
+        node = node.getRootNode().host;
+        continue;
+      }
+      node = node.parentElement;
     }
-
-    // If IAB is present but no direct selector matched, look for the consent
-    // container that IAB frameworks typically inject
-    const iabContainers = [
-      "div[id^='sp_message_container']",
-      ".sp_message_container",
-      "#__cmpLocator",
-      "[id*='cmpbox']",
-      ".cmp-container",
-      "[class*='cmp-']",
-    ];
-
-    for (const sel of iabContainers) {
-      try {
-        const container = document.querySelector(sel);
-        if (container && isVisible(container)) {
-          const btn = findAcceptButtonInContainer(container);
-          if (btn) return btn;
-        }
-      } catch (e) { /* skip */ }
-    }
-
-    return null;
+    return floatingAncestor(el);
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STRATEGY 2: CONTAINER-BASED DETECTION
+  // STRATEGY 2: CONSENT CONTAINERS (known + text-anchored heuristics)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function findCookieContainers() {
-    const containers = [];
-    const seen = new WeakSet();
+  // Nearest ancestor that looks like a banner/dialog rather than page content.
+  function floatingAncestor(start) {
+    let node = start;
+    for (let depth = 0; node && depth < CONFIG.maxAncestorWalk; depth++) {
+      if (node.nodeType === 1 && node !== document.body && node !== document.documentElement) {
+        try {
+          if (RE_HINT.test(classAndId(node))) return node;
+          const role = node.getAttribute("role");
+          if (role === "dialog" || role === "alertdialog" || node.getAttribute("aria-modal") === "true") return node;
+          if (node.localName === "dialog" && node.open) return node;
+          const style = getComputedStyle(node);
+          if (style.position === "fixed" || style.position === "sticky") return node;
+          if ((parseInt(style.zIndex, 10) || 0) > 100 && style.position !== "static") return node;
+        } catch (e) { /* skip */ }
+      }
+      node = parentOf(node);
+    }
+    return null;
+  }
+
+  function isPlausibleContainer(el) {
+    if (!isVisible(el)) return false;
+    const rect = el.getBoundingClientRect();
+    if (rect.width < CONFIG.minBannerWidth || rect.height < CONFIG.minBannerHeight) return false;
+
+    const text = visibleText(el);
+    if (!RE_CONTEXT.test(text)) return false;       // must *say* cookies/consent
+    if (RE_CAPTCHA.test(text)) return false;
+    if (text.length > CONFIG.maxContainerTextLength) return false;
+
+    const vw = window.innerWidth || 1024;
+    const vh = window.innerHeight || 768;
+    const nearlyFullscreen = rect.width * rect.height > vw * vh * 0.85;
+    if (nearlyFullscreen && text.length > CONFIG.maxWallTextLength) return false; // app shell, not a wall
+    return true;
+  }
+
+  // Cheap pre-check: the page (or a shadow tree) must mention cookies at all.
+  function mentionsConsent(roots) {
+    for (const root of roots) {
+      const host = root === document ? document.body : root;
+      if (host && RE_CONTEXT.test(normalizeText((host.textContent || "").slice(0, 200000)))) return true;
+    }
+    return false;
+  }
+
+  function findContainers(roots) {
+    const found = [];
+    const seen = new Set();
+    const add = (el) => {
+      if (!el || seen.has(el)) return;
+      seen.add(el);
+      if (isPlausibleContainer(el)) found.push(el);
+    };
 
     // Known CMP containers
-    for (const selector of CMP_CONTAINER_SELECTORS) {
-      try {
-        const elements = querySelectorAllDeep(selector);
-        for (const el of elements) {
-          if (seen.has(el) || !isVisible(el)) continue;
-          seen.add(el);
-          containers.push(el);
-        }
-      } catch (e) { /* skip invalid selector */ }
-    }
+    for (const el of queryAllDeep(roots, CONTAINER_SELECTOR_JOINED)) add(el);
 
-    // Heuristic scan for unknown banners
-    try {
-      const candidates = document.querySelectorAll(
-        "div, section, aside, dialog, form, [role='dialog'], [role='alertdialog'], [role='banner']"
-      );
-
-      const vw = window.innerWidth || document.documentElement.clientWidth || 1024;
-      const vh = window.innerHeight || document.documentElement.clientHeight || 768;
-
-      for (const el of candidates) {
-        if (seen.has(el) || !isVisible(el)) continue;
-
-        const rect = el.getBoundingClientRect();
-        if (rect.width < CONFIG.minBannerWidth || rect.height < CONFIG.minBannerHeight) continue;
-        if (rect.width * rect.height > vw * vh * 0.85) continue;
-
-        const idClass = normalizeText((el.id || "") + " " + (el.className || "").toString());
-        const hasCookieHint = containsAny(idClass, [
-          "cookie", "consent", "gdpr", "privacy", "banner", "notice",
-          "compliance", "dsgvo", "rgpd", "ccpa", "eprivacy",
-          "cerez", "çerez", "datenschutz", "consentement", "confidentialit",
-          "privacidad", "consenso", "toestemming", "ciasteczk",
-          "kakor", "samtycke", "eväste", "souhlas", "süti",
-          "gizlilik", "куки", "согласие",
-          "クッキー", "쿠키", "คุกกี้", "كوكيز", "कुकी",
-        ]);
-
-        const innerText = normalizeText((el.innerText || "").substring(0, 2000));
-        const mentionsCookies = containsAny(innerText, COOKIE_CONTEXT_KEYWORDS);
-        const looksLikeRobot = containsAny(innerText, AVOID_KEYWORDS);
-
-        if (!hasCookieHint && !mentionsCookies) continue;
-        if (looksLikeRobot) continue;
-
-        // Check positioning
-        const style = window.getComputedStyle(el);
-        const position = style.position;
-        const zIndex = parseInt(style.zIndex) || 0;
-        const isOverlay = position === "fixed" || position === "sticky" || zIndex > 100;
-        const isBottomBar = rect.bottom > vh * 0.7 && rect.height < vh * 0.4;
-        const isTopBar = rect.top < vh * 0.3 && rect.height < vh * 0.4;
-
-        // Only add if it looks like an overlay/banner (not inline content)
-        if (hasCookieHint || isOverlay || isBottomBar || isTopBar) {
-          seen.add(el);
-          containers.push(el);
-        }
+    // Text-anchored: start from text that mentions cookies and walk up to the
+    // floating box that contains it. Footer links ("Cookie policy") are
+    // ignored naturally because they don't sit in a floating container.
+    let anchors = 0;
+    for (const root of roots) {
+      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+          const parent = node.parentElement;
+          if (!parent || /^(SCRIPT|STYLE|NOSCRIPT|TEMPLATE|TEXTAREA)$/.test(parent.tagName)) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return node.data.length > 3 && RE_CONTEXT.test(normalizeText(node.data))
+            ? NodeFilter.FILTER_ACCEPT
+            : NodeFilter.FILTER_SKIP;
+        },
+      });
+      for (let t = walker.nextNode(); t && anchors < CONFIG.maxTextAnchors; t = walker.nextNode()) {
+        anchors++;
+        add(floatingAncestor(t.parentElement));
       }
-    } catch (e) { /* skip heuristic scan on error */ }
-
-    return containers;
+    }
+    return found;
   }
 
+  const CLICKABLE_SELECTOR = [
+    "button", "[role='button']", "input[type='button']", "input[type='submit']",
+    "a", "[onclick]", "[tabindex='0']",
+  ].join(",");
+
   function findAcceptButtonInContainer(container) {
-    const clickableSelectors = [
-      "button",
-      "[role='button']",
-      "input[type='button']",
-      "input[type='submit']",
-      "a",
-      "span[onclick]",
-      "div[onclick]",
-      "div[role='button']",
-      "[tabindex='0']",
-    ];
-
-    const clickables = [];
-
-    for (const sel of clickableSelectors) {
-      try {
-        let elements;
-        if (container.shadowRoot) {
-          elements = container.shadowRoot.querySelectorAll(sel);
-        } else {
-          elements = container.querySelectorAll(sel);
-        }
-
-        for (const el of elements) {
-          if (!isVisible(el)) continue;
-          const rawText = el.innerText || el.value || el.textContent || "";
-          const text = normalizeText(rawText);
-          if (!text || text.length > CONFIG.maxButtonTextLength) continue;
-          clickables.push({ el, text });
-        }
-      } catch (e) { /* skip */ }
-    }
-
-    if (!clickables.length) return null;
-
-    // Score each clickable
     const candidates = [];
-
-    for (const { el, text } of clickables) {
+    for (const el of queryAllDeep(collectRoots(container), CLICKABLE_SELECTOR)) {
+      if (!isVisible(el)) continue;
+      const text = buttonText(el);
       if (isBadTarget(el, text)) continue;
 
       let strength = 0;
+      if (RE_STRONG.test(text)) strength = 10;
+      else if (RE_EXACT.test(text)) strength = 7;
+      else if (RE_GENERIC.test(text)) strength = 4;
+      if (!strength) continue;
 
-      if (containsAny(text, ACCEPT_PHRASES_STRONG)) {
-        strength = 10;
-      } else if (matchesExact(text, ACCEPT_PHRASES_GENERIC)) {
-        strength = 7;
-      } else if (containsAny(text, ACCEPT_PHRASES_GENERIC)) {
-        // Filter out false positives for generic matches
-        if (
-          text.includes("article") || text.includes("section") ||
-          text.includes("home") || text.includes("subscribe") ||
-          text.includes("sign") || text.includes("log") ||
-          text.includes("register") || text.includes("download") ||
-          text.includes("newsletter") || text.includes("shop") ||
-          text.includes("buy") || text.includes("cart")
-        ) {
-          continue;
-        }
-        strength = 4;
-      }
-
-      if (strength === 0) continue;
-
-      const rect = el.getBoundingClientRect();
-      const area = rect.width * rect.height;
       const tag = (el.tagName || "").toUpperCase();
-
-      let typeBonus = 0;
+      let typeBonus = 1;
       if (tag === "BUTTON" || tag === "INPUT") typeBonus = 3;
       else if (el.getAttribute("role") === "button") typeBonus = 2;
       else if (tag === "A") typeBonus = 0;
-      else typeBonus = 1;
 
-      // Prefer elements with prominent styling
       let styleBonus = 0;
       try {
-        const style = window.getComputedStyle(el);
-        const bgColor = style.backgroundColor;
-        if (bgColor && bgColor !== "rgba(0, 0, 0, 0)" && bgColor !== "transparent") {
-          styleBonus += 2;
-        }
-        // Primary/CTA buttons tend to be bolder
-        const fontWeight = parseInt(style.fontWeight) || 400;
-        if (fontWeight >= 600) styleBonus += 1;
+        const style = getComputedStyle(el);
+        const bg = style.backgroundColor;
+        if (bg && bg !== "rgba(0, 0, 0, 0)" && bg !== "transparent") styleBonus += 2;
+        if ((parseInt(style.fontWeight, 10) || 400) >= 600) styleBonus += 1;
       } catch (e) { /* skip */ }
 
+      const rect = el.getBoundingClientRect();
       candidates.push({
         el,
-        score: strength * 100 + typeBonus * 10 + styleBonus * 5 + Math.min(area / 100, 50),
+        score: strength * 100 + typeBonus * 10 + styleBonus * 5 + Math.min((rect.width * rect.height) / 100, 50),
       });
     }
-
     if (!candidates.length) return null;
     candidates.sort((a, b) => b.score - a.score);
     return candidates[0].el;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STRATEGY 3: ARIA/ATTRIBUTE-BASED DETECTION
+  // DETECTION PIPELINE
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function tryAriaBasedDetection() {
-    const ariaSelectors = [
-      "button[aria-label*='accept' i]",
-      "button[aria-label*='agree' i]",
-      "button[aria-label*='allow' i]",
-      "button[aria-label*='consent' i]",
-      "[role='button'][aria-label*='accept' i]",
-      "[role='button'][aria-label*='agree' i]",
-      "button[data-action='accept']",
-      "button[data-action='agree']",
-      "button[data-consent='accept']",
-      "button[data-cookieconsent='accept']",
-      "a[data-action='accept']",
-      "a[data-consent='accept']",
-      "[data-cy='cookie-accept']",
-      "[data-testid*='accept']",
-      "[data-testid*='agree']",
-    ];
+  const cmpOnly = CMP_ONLY_DOMAINS.some((d) => hostMatches(SITE, d));
 
-    for (const selector of ariaSelectors) {
-      try {
-        const el = querySelectorDeep(selector);
-        if (el && isVisible(el)) {
-          const text = normalizeText(el.innerText || el.value || el.getAttribute("aria-label") || "");
-          if (!containsAny(text, NEGATIVE_KEYWORDS.slice(0, 40))) {
-            return el;
-          }
-        }
-      } catch (e) { /* skip */ }
+  // full=false: only the cheap document-level CMP selector check. Used for
+  // mutations that add nothing cookie-related (tickers, carousels, ads).
+  function findTarget(full = true) {
+    if (isChallengePage()) return null;
+    const roots = full ? collectRoots() : [document];
+
+    const cmp = findCMPButton(roots);
+    if (cmp) return cmp;
+
+    if (cmpOnly || !full) return null;
+    if (!mentionsConsent(roots)) return null; // fast path for most pages
+
+    for (const container of findContainers(roots)) {
+      const el = findAcceptButtonInContainer(container);
+      if (el) return { el, container, strategy: "container" };
     }
-
     return null;
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STRATEGY 4: OVERLAY/BACKDROP DETECTION
+  // CLICK ENGINE
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function tryOverlayDetection() {
-    const overlaySelectors = [
-      "[class*='overlay']",
-      "[class*='backdrop']",
-      "[class*='modal']",
-      "[id*='overlay']",
-      "[id*='backdrop']",
-    ];
+  // One activation per attempt. The old engine fired a synthetic click AND
+  // el.click() AND Enter, i.e. 2-3 activations per attempt.
+  function activate(el) {
+    const rect = el.getBoundingClientRect();
+    const base = {
+      bubbles: true, cancelable: true, composed: true, view: window,
+      clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2, button: 0,
+    };
+    const pointer = { ...base, pointerId: 1, pointerType: "mouse", isPrimary: true };
+    // Some CMPs listen for pointer/mouse down/up rather than click
+    el.dispatchEvent(new PointerEvent("pointerdown", pointer));
+    el.dispatchEvent(new MouseEvent("mousedown", base));
+    el.dispatchEvent(new PointerEvent("pointerup", pointer));
+    el.dispatchEvent(new MouseEvent("mouseup", base));
+    el.click(); // the single real activation (composed, triggers default action)
+  }
 
-    for (const sel of overlaySelectors) {
-      try {
-        const overlays = document.querySelectorAll(sel);
-        for (const overlay of overlays) {
-          if (!isVisible(overlay)) continue;
-
-          const style = window.getComputedStyle(overlay);
-          const rect = overlay.getBoundingClientRect();
-          const vw = window.innerWidth || 1024;
-          const vh = window.innerHeight || 768;
-
-          if (rect.width < vw * 0.8 || rect.height < vh * 0.8) continue;
-          if (style.position !== "fixed" && style.position !== "absolute") continue;
-
-          const text = normalizeText((overlay.innerText || "").substring(0, 2000));
-          if (!containsAny(text, COOKIE_CONTEXT_KEYWORDS)) continue;
-          if (containsAny(text, AVOID_KEYWORDS)) continue;
-
-          const btn = findAcceptButtonInContainer(overlay);
-          if (btn) return btn;
-        }
-      } catch (e) { /* skip */ }
-    }
-
-    return null;
+  function stillShowing(target) {
+    if (isVisible(target.el)) return true;
+    return !!(target.container && isVisible(target.container) && target.container.contains(target.el));
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
-  // STRATEGY 5: IFRAME-BASED CONSENT
+  // CSS FALLBACK
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function tryIframeConsent() {
+  let cssFallbackInjected = false;
+
+  function injectCssFallback(target) {
     try {
-      const iframes = document.querySelectorAll("iframe");
-      for (const iframe of iframes) {
-        const src = (iframe.src || "").toLowerCase();
-        const consentHosts = [
-          "consent", "cookie", "gdpr", "privacy", "cmp",
-          "trustarc", "onetrust", "cookiebot", "quantcast",
-          "didomi", "sourcepoint", "consentmanager",
-        ];
-
-        if (!consentHosts.some((h) => src.includes(h))) continue;
-
-        try {
-          const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-          if (!iframeDoc) continue;
-
-          for (const selector of CMP_ACCEPT_SELECTORS) {
-            try {
-              const el = iframeDoc.querySelector(selector);
-              if (el && isVisible(el)) return el;
-            } catch (e) { /* cross-origin */ }
-          }
-
-          const buttons = iframeDoc.querySelectorAll("button, [role='button'], a");
-          for (const btn of buttons) {
-            const text = normalizeText(btn.innerText || btn.value || "");
-            if (containsAny(text, ACCEPT_PHRASES_STRONG) && !containsAny(text, NEGATIVE_KEYWORDS)) {
-              if (isVisible(btn)) return btn;
-            }
-          }
-        } catch (e) { /* cross-origin iframe */ }
+      if (target && target.container) target.container.setAttribute("data-idgac-hidden", "");
+      if (!document.getElementById("idgac-css-fallback")) {
+        const style = document.createElement("style");
+        style.id = "idgac-css-fallback";
+        style.textContent = CSS_HIDE_RULES;
+        (document.head || document.documentElement).appendChild(style);
       }
-    } catch (e) { /* skip */ }
-
-    return null;
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // CONSENT CONTEXT PROXIMITY CHECK
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  function isInsideConsentContext(el) {
-    // Walk up the DOM tree (max 8 levels) to check if this button
-    // is inside something that looks like a consent interface
-    let parent = el.parentElement;
-    let depth = 0;
-    const maxDepth = 8;
-
-    while (parent && depth < maxDepth) {
-      try {
-        const style = window.getComputedStyle(parent);
-        const position = style.position;
-        const zIndex = parseInt(style.zIndex) || 0;
-
-        // Check 1: Is parent fixed/sticky (overlay-like)?
-        if (position === "fixed" || position === "sticky") return true;
-
-        // Check 2: High z-index (above normal content)?
-        if (zIndex > 100) return true;
-
-        // Check 3: Does parent have cookie-related class/id?
-        const idClass = normalizeText((parent.id || "") + " " + (parent.className || "").toString());
-        if (containsAny(idClass, [
-          "cookie", "consent", "gdpr", "privacy", "cmp", "banner",
-          "notice", "compliance", "dsgvo", "rgpd", "ccpa",
-        ])) return true;
-
-        // Check 4: Does parent have cookie-related text nearby?
-        const parentText = normalizeText((parent.innerText || "").substring(0, 500));
-        if (containsAny(parentText, [
-          "cookie", "cookies", "consent", "gdpr", "privacy",
-          "we use cookies", "this site uses", "data protection",
-        ])) return true;
-
-        // Check 5: Is this a dialog/alertdialog role?
-        const role = parent.getAttribute && parent.getAttribute("role");
-        if (role === "dialog" || role === "alertdialog") return true;
-
-      } catch (e) { /* skip */ }
-
-      parent = parent.parentElement;
-      depth++;
-    }
-
-    return false;
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // STRATEGY 6: FULL-PAGE SCAN (strict, last resort)
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  function tryFullPageScan() {
-    try {
-      const bodyText = normalizeText(
-        (document.body && document.body.innerText || "").substring(0, 5000)
-      );
-      if (!containsAny(bodyText, COOKIE_CONTEXT_KEYWORDS)) return null;
-      if (isLikelyRobotPage()) return null;
-
-      const selectors = ["button", "[role='button']", "input[type='button']", "input[type='submit']"];
-
-      const vh = window.innerHeight || document.documentElement.clientHeight || 768;
-      const candidates = [];
-
-      for (const sel of selectors) {
-        const elements = querySelectorAllDeep(sel);
-        for (const el of elements) {
-          if (!isVisible(el) || !isInViewport(el)) continue;
-
-          const rawText = el.innerText || el.value || el.textContent || "";
-          const text = normalizeText(rawText);
-          if (!text || text.length > 30) continue;
-          if (isBadTarget(el, text)) continue;
-
-          // Only strong accept phrases for full-page scan
-          if (!containsAny(text, ACCEPT_PHRASES_STRONG)) continue;
-
-          // GOLD CODE PRINCIPLE: Proximity check
-          // Full-page scan buttons MUST be inside a consent-like container
-          // (fixed/sticky positioned, or high z-index, or has cookie context nearby)
-          if (!isInsideConsentContext(el)) continue;
-
-          const rect = el.getBoundingClientRect();
-          const area = rect.width * rect.height;
-          const centerY = rect.top + rect.height / 2;
-          let positionBonus = 0;
-          if (centerY > vh * 0.7 || centerY < vh * 0.3) positionBonus = 20;
-
-          candidates.push({
-            el,
-            score: area + positionBonus * 100,
-          });
-        }
+      hideBlockingBackdrops();
+      unlockScroll();
+      if (!cssFallbackInjected) {
+        cssFallbackInjected = true;
+        sendToBackground("cssFallbackUsed");
       }
-
-      if (!candidates.length) return null;
-      candidates.sort((a, b) => b.score - a.score);
-      return candidates[0].el;
-    } catch (e) {
-      return null;
-    }
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // CLICK ENGINE (with verification and retry)
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  let pendingVerification = null;
-
-  function clickButton(el, strategy) {
-    try {
-      log(`Attempting click via ${strategy}:`, el.innerText || el.value);
-
-      // Method 1: Full mouse event sequence (most realistic)
-      const rect = el.getBoundingClientRect();
-      const x = rect.left + rect.width / 2;
-      const y = rect.top + rect.height / 2;
-
-      const eventOptions = {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-        clientX: x,
-        clientY: y,
-      };
-
-      el.dispatchEvent(new PointerEvent("pointerdown", eventOptions));
-      el.dispatchEvent(new MouseEvent("mousedown", eventOptions));
-      el.dispatchEvent(new PointerEvent("pointerup", eventOptions));
-      el.dispatchEvent(new MouseEvent("mouseup", eventOptions));
-      el.dispatchEvent(new MouseEvent("click", eventOptions));
-
-      // Method 2: Direct click as fallback
-      el.click();
-
-      // Method 3: Focus + Enter (for keyboard-accessible buttons)
-      try {
-        el.focus();
-        el.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
-        el.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
-      } catch (e) { /* skip */ }
-
-      markHandled();
-      log(`Click successful via ${strategy}`);
-
-      // Schedule verification
-      scheduleClickVerification(el, strategy);
-
-    } catch (e) {
-      logError(`Click failed via ${strategy}:`, e);
-      // Fallback: try simple click
-      try {
-        el.dispatchEvent(new Event("click", { bubbles: true }));
-        markHandled();
-        scheduleClickVerification(el, strategy);
-      } catch (e2) {
-        logError("All click methods failed");
-      }
-    }
-  }
-
-  function scheduleClickVerification(clickedEl, strategy) {
-    if (pendingVerification) clearTimeout(pendingVerification);
-
-    pendingVerification = setTimeout(() => {
-      pendingVerification = null;
-      verifyBannerDismissed(clickedEl, strategy);
-    }, CONFIG.clickVerifyDelay);
-  }
-
-  function verifyBannerDismissed(clickedEl, strategy) {
-    // Check if the banner is still visible
-    const bannerStillVisible = isBannerStillVisible();
-
-    if (bannerStillVisible) {
-      log("Banner still visible after click, attempting recovery...");
-
-      if (clickCount < CONFIG.clickRetryAttempts) {
-        // Try clicking again with a different approach
-        retryClick(strategy);
-      } else {
-        // All click attempts exhausted — inject CSS fallback
-        log("Click retries exhausted, injecting CSS fallback");
-        injectCssFallback();
-      }
-    } else {
-      log("Banner successfully dismissed");
-    }
-  }
-
-  function isBannerStillVisible() {
-    // Check if any known banner container is still visible
-    for (const selector of CMP_CONTAINER_SELECTORS.slice(0, 50)) {
-      try {
-        const el = document.querySelector(selector);
-        if (el && isVisible(el)) {
-          const rect = el.getBoundingClientRect();
-          if (rect.height > 50 && rect.width > 200) {
-            return true;
-          }
-        }
-      } catch (e) { /* skip */ }
-    }
-    return false;
-  }
-
-  function retryClick(previousStrategy) {
-    log("Retrying cookie acceptance...");
-    // Reset handled state to allow another attempt
-    hasBeenHandled = false;
-    // Try the full detection pipeline again
-    setTimeout(() => {
-      tryAcceptCookies();
-    }, 300);
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // CSS FALLBACK (hide banners when clicks fail)
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  function injectCssFallback() {
-    if (cssFallbackInjected) return;
-    cssFallbackInjected = true;
-
-    try {
-      const style = document.createElement("style");
-      style.id = "idgac-css-fallback";
-      style.textContent = CSS_HIDE_RULES;
-      (document.head || document.documentElement).appendChild(style);
-
-      // Also remove body scroll locks that banners often apply
-      document.body.style.overflow = "";
-      document.body.style.position = "";
-      document.documentElement.style.overflow = "";
-
-      // Remove common body classes that lock scrolling
-      const lockClasses = [
-        "modal-open", "no-scroll", "overflow-hidden", "cookie-consent-active",
-        "cmplz-blocked", "cookies-not-accepted", "gdpr-active",
-      ];
-      for (const cls of lockClasses) {
-        document.body.classList.remove(cls);
-        document.documentElement.classList.remove(cls);
-      }
-
       log("CSS fallback injected");
-      notifyBackground("cssFallbackUsed", { hostname: window.location.hostname });
     } catch (e) {
       logError("Failed to inject CSS fallback:", e);
     }
   }
 
-  function removeCssFallback() {
-    const style = document.getElementById("idgac-css-fallback");
-    if (style) {
-      style.remove();
-      cssFallbackInjected = false;
-    }
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // MAIN ORCHESTRATOR
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  function isCMPOnlyDomain() {
-    const hostname = window.location.hostname;
-    return CMP_ONLY_DOMAINS.some((d) => hostname === d || hostname.endsWith("." + d));
-  }
-
-  function tryAcceptCookies() {
-    if (hasBeenHandled) return false;
-    if (siteBlocked) return false;
-    if (isLikelyRobotPage()) return false;
-
-    const cmpOnly = isCMPOnlyDomain();
-    let button = null;
-
-    // Strategy 1: CMP-specific selectors (fastest, most reliable)
-    button = tryCMPSelectors();
-    if (button) {
-      clickButton(button, "CMP selector");
-      return true;
-    }
-
-    // Strategy 1B: IAB TCF framework detection
-    button = tryIABTCFDetection();
-    if (button) {
-      clickButton(button, "IAB TCF");
-      return true;
-    }
-
-    // GOLD CODE SAFEGUARD: On problematic domains, ONLY use CMP selectors
-    // and IAB detection. Do NOT use heuristic strategies that can cause
-    // redirect loops (X.com/Grok, NYT/Cooking, Vimeo/legal).
-    if (cmpOnly) {
-      log("CMP-only domain, skipping heuristic strategies");
-      return false;
-    }
-
-    // Strategy 2: Container-based detection
-    const containers = findCookieContainers();
-    for (const container of containers) {
-      button = findAcceptButtonInContainer(container);
-      if (button) {
-        clickButton(button, "container-based");
-        return true;
+  // Empty full-screen fixed layers left behind once the dialog is hidden
+  function hideBlockingBackdrops() {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const points = [[vw / 2, vh / 2], [10, 10], [vw - 10, vh - 10]];
+    for (const [x, y] of points) {
+      for (const el of document.elementsFromPoint(x, y)) {
+        if (el === document.body || el === document.documentElement) break;
+        const style = getComputedStyle(el);
+        if (style.position !== "fixed") continue;
+        // Decorative full-page layers (video/canvas backgrounds) sit low in
+        // the stack; consent backdrops sit on top of the page.
+        if ((parseInt(style.zIndex, 10) || 0) < 100) continue;
+        if (/^(CANVAS|VIDEO|IMG|IFRAME|PICTURE)$/.test(el.tagName)) continue;
+        const r = el.getBoundingClientRect();
+        const covers = r.width >= vw * 0.9 && r.height >= vh * 0.9;
+        if (covers && (el.textContent || "").trim().length < 20) {
+          el.setAttribute("data-idgac-hidden", "");
+        }
       }
     }
+  }
 
-    // Strategy 3: ARIA/attribute-based detection
-    button = tryAriaBasedDetection();
-    if (button) {
-      clickButton(button, "aria-based");
-      return true;
+  function unlockScroll() {
+    for (const node of [document.documentElement, document.body]) {
+      if (!node) continue;
+      for (const cls of SCROLL_LOCK_CLASSES) node.classList.remove(cls);
+      if (getComputedStyle(node).overflow === "hidden" && node.style.overflow === "hidden") {
+        node.style.overflow = "";
+      }
+      if (node.style.position === "fixed") node.style.position = "";
     }
+  }
 
-    // Strategy 4: Overlay detection
-    button = tryOverlayDetection();
-    if (button) {
-      clickButton(button, "overlay");
-      return true;
+  function removeCssFallback() {
+    const style = document.getElementById("idgac-css-fallback");
+    if (style) style.remove();
+    for (const el of document.querySelectorAll("[data-idgac-hidden]")) el.removeAttribute("data-idgac-hidden");
+    cssFallbackInjected = false;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // STATE MACHINE
+  //   idle → scanning → clicking → verifying → scanning (retry) | done | stopped
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  const state = {
+    phase: "idle",
+    armedAt: 0,
+    attempts: 0,       // clicks on the current banner
+    successes: 0,      // banners dismissed on this page
+    lastStrategy: null,
+    timers: new Set(),
+    observer: null,
+    lastScan: 0,
+    scanQueued: false,
+    fullScanPending: false,
+  };
+
+  function later(fn, ms) {
+    const id = setTimeout(() => {
+      state.timers.delete(id);
+      fn();
+    }, ms);
+    state.timers.add(id);
+  }
+
+  function clearTimers() {
+    for (const id of state.timers) clearTimeout(id);
+    state.timers.clear();
+    state.scanQueued = false;
+  }
+
+  function arm(reason) {
+    if (!canRun()) return;
+    log("Scanning armed:", reason);
+    clearTimers();
+    state.phase = "scanning";
+    state.armedAt = Date.now();
+    state.attempts = 0;
+    scan();
+    for (const delay of CONFIG.retryDelays) {
+      if (delay < CONFIG.scanWindowMs) later(scan, delay);
     }
+    later(() => stop("scan window elapsed"), CONFIG.scanWindowMs);
+    startObserver();
+  }
 
-    // Strategy 5: Iframe consent
-    button = tryIframeConsent();
-    if (button) {
-      clickButton(button, "iframe");
-      return true;
+  function stop(reason) {
+    if (state.phase === "stopped" || state.phase === "done") return;
+    log("Scanning stopped:", reason);
+    state.phase = reason === "done" ? "done" : "stopped";
+    clearTimers();
+    stopObserver();
+  }
+
+  function scan(full = true) {
+    if (state.phase !== "scanning") return;
+    if (!canRun()) {
+      stop("disabled");
+      return;
     }
-
-    // Strategy 6: Full-page scan (last resort, with proximity check)
-    button = tryFullPageScan();
-    if (button) {
-      clickButton(button, "full-page scan");
-      return true;
+    state.lastScan = Date.now();
+    let target = null;
+    try {
+      target = findTarget(full);
+    } catch (e) {
+      logError("Detection error:", e);
     }
+    if (!target) return;
 
+    state.phase = "clicking";
+    sendToBackground("requestClick").then((res) => {
+      if (state.phase !== "clicking") return;
+      if (res && res.allowed === false) {
+        log("Loop guard: too many clicks on this site recently, backing off");
+        stop("loop guard");
+        return;
+      }
+      if (!target.el.isConnected) {
+        state.phase = "scanning";
+        return;
+      }
+      try {
+        log(`Clicking via ${target.strategy}:`, buttonText(target.el));
+        activate(target.el);
+      } catch (e) {
+        logError("Click failed:", e);
+      }
+      state.attempts++;
+      state.lastStrategy = target.strategy;
+      state.phase = "verifying";
+      verify(target, CONFIG.verifyStartMs);
+    });
+  }
+
+  function verify(target, elapsed) {
+    later(() => {
+      if (state.phase !== "verifying") return;
+      if (!stillShowing(target)) return onDismissed();
+      if (elapsed + CONFIG.verifyPollMs <= CONFIG.verifyEndMs) {
+        return verify(target, elapsed + CONFIG.verifyPollMs);
+      }
+      onStillVisible(target);
+    }, elapsed === CONFIG.verifyStartMs ? elapsed : CONFIG.verifyPollMs);
+  }
+
+  function onDismissed() {
+    state.successes++;
+    state.attempts = 0;
+    log("Banner dismissed");
+    sendToBackground("bannerDismissed", { strategy: state.lastStrategy });
+    if (state.successes >= CONFIG.maxBannersPerPage) {
+      stop("done");
+    } else {
+      state.phase = "scanning"; // watch briefly for a second consent step
+    }
+  }
+
+  function onStillVisible(target) {
+    if (state.attempts < CONFIG.clickAttemptsPerBanner) {
+      log(`Banner still visible after attempt ${state.attempts}, retrying`);
+      state.phase = "scanning";
+      scan();
+      return;
+    }
+    log("Click attempts exhausted, using CSS fallback");
+    injectCssFallback(target);
+    stop("done");
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // OBSERVATION (throttled, not debounced: a live ticker can't starve it)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // Does this batch add anything that could be (part of) a consent banner?
+  function mutationsLookRelevant(records) {
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (node.nodeType === 3) {
+          if (RE_CONTEXT.test(normalizeText(node.data))) return true;
+        } else if (node.nodeType === 1) {
+          if (node.localName.includes("-") || node.shadowRoot || node.localName === "iframe") return true;
+          if (RE_HINT.test(classAndId(node))) return true;
+          if (RE_CONTEXT.test(normalizeText((node.textContent || "").slice(0, 5000)))) return true;
+        }
+      }
+    }
     return false;
   }
 
-  // ═══════════════════════════════════════════════════════════════════════════
-  // SPA NAVIGATION DETECTION
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  function setupSPADetection() {
-    // Method 1: Listen for popstate (back/forward)
-    window.addEventListener("popstate", onSPANavigation);
-
-    // Method 2: Listen for hashchange
-    window.addEventListener("hashchange", onSPANavigation);
-
-    // Method 3: Patch History API to detect pushState/replaceState
-    try {
-      const originalPushState = history.pushState;
-      const originalReplaceState = history.replaceState;
-
-      history.pushState = function (...args) {
-        originalPushState.apply(this, args);
-        setTimeout(onSPANavigation, 100);
-      };
-
-      history.replaceState = function (...args) {
-        originalReplaceState.apply(this, args);
-        setTimeout(onSPANavigation, 100);
-      };
-    } catch (e) { /* skip if patching fails */ }
-
-    // Method 4: Periodic URL check as ultimate fallback
-    setInterval(() => {
-      if (window.location.href !== lastUrl) {
-        onSPANavigation();
-      }
-    }, CONFIG.spaCheckInterval);
-  }
-
-  function onSPANavigation() {
-    const newUrl = window.location.href;
-    if (newUrl === lastUrl) return;
-
-    log("SPA navigation detected:", lastUrl, "→", newUrl);
-
-    // GOLD CODE PRINCIPLE: Domain Acceptance Lock
-    // Only reset scanning if the DOMAIN changed.
-    // Same-domain path changes (e.g., Garmin cart → product page) should NOT
-    // re-enable scanning, because cookies were already accepted for this domain.
-    const oldHostname = extractHostname(lastUrl);
-    const newHostname = extractHostname(newUrl);
-    lastUrl = newUrl;
-
-    if (oldHostname === newHostname && clickCount > 0) {
-      // Same domain and we already clicked something — do NOT reset.
-      // The banner was already handled for this domain.
-      log("Same-domain navigation, acceptance lock preserved");
-      return;
-    }
-
-    // Different domain or no prior clicks — safe to reset
-    hasBeenHandled = false;
-    cssFallbackInjected = false;
-    // Don't reset clickCount — keep per-domain limit
-
-    // Re-scan after a delay (give new page content time to render)
-    setTimeout(() => {
-      scheduleRetries();
-      startObserver();
-    }, CONFIG.observerReactivateDelay);
-  }
-
-  function extractHostname(url) {
-    try {
-      return new URL(url).hostname;
-    } catch (e) {
-      return window.location.hostname;
-    }
-  }
-
-  // ═══════════════════════════════════════════════════════════════════════════
-  // SCHEDULING & OBSERVATION
-  // ═══════════════════════════════════════════════════════════════════════════
-
-  let observer = null;
-  let observerActive = false;
-  let startTime = 0;
-
-  function scheduleRetries() {
-    startTime = Date.now();
-
-    // Immediate attempt
-    if (tryAcceptCookies()) return;
-
-    // Progressive retries with increasing delays (extended to 30s)
-    const delays = [100, 250, 500, 800, 1200, 1800, 2500, 3500, 5000, 7500, 10000, 15000, 20000, 25000];
-    for (const delay of delays) {
-      if (delay > CONFIG.maxRetryDuration) break;
-      setTimeout(() => {
-        if (hasBeenHandled || siteBlocked) return;
-        tryAcceptCookies();
-      }, delay);
-    }
+  function onMutations(records) {
+    if (state.phase !== "scanning") return;
+    if (mutationsLookRelevant(records)) state.fullScanPending = true;
+    if (state.scanQueued) return;
+    const wait = Math.max(0, state.lastScan + CONFIG.scanThrottleMs - Date.now());
+    state.scanQueued = true;
+    later(() => {
+      state.scanQueued = false;
+      const full = state.fullScanPending;
+      state.fullScanPending = false;
+      scan(full);
+    }, wait);
   }
 
   function startObserver() {
-    if (observerActive) return;
-    observerActive = true;
-
-    const target = document.documentElement || document.body;
+    if (state.observer) return;
+    const target = document.documentElement;
     if (!target) return;
-
-    const debouncedHandler = debounce(() => {
-      if (hasBeenHandled || siteBlocked) {
-        disconnectObserver();
-        return;
-      }
-      if (Date.now() - startTime > CONFIG.maxRetryDuration) {
-        disconnectObserver();
-        return;
-      }
-      tryAcceptCookies();
-    }, CONFIG.debounceMs);
-
-    observer = new MutationObserver(debouncedHandler);
-
-    observer.observe(target, {
-      childList: true,
-      subtree: true,
-      // Only watch childList changes (not attributes) for performance
-    });
-
-    // Auto-disconnect after max duration
-    setTimeout(() => {
-      disconnectObserver();
-    }, CONFIG.maxRetryDuration + 1000);
+    state.observer = new MutationObserver(onMutations);
+    state.observer.observe(target, { childList: true, subtree: true });
   }
 
-  function disconnectObserver() {
-    if (observer) {
-      observer.disconnect();
-      observer = null;
+  function stopObserver() {
+    if (state.observer) {
+      state.observer.disconnect();
+      state.observer = null;
     }
-    observerActive = false;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // SPA NAVIGATION (top frame only)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  let lastUrl = location.href;
+
+  function onUrlChange() {
+    if (location.href === lastUrl) return;
+    log("SPA navigation:", lastUrl, "→", location.href);
+    lastUrl = location.href;
+    // Acceptance lock: consent already given on this page load stays given.
+    if (state.successes > 0 || cssFallbackInjected) return;
+    setTimeout(() => arm("spa navigation"), CONFIG.spaRearmDelay);
+  }
+
+  function setupSPADetection() {
+    if (!IS_TOP) return;
+    // Patching history.pushState from a content script does nothing: the
+    // page runs in a different JS world. The Navigation API's events do
+    // reach us; fall back to polling where it isn't available.
+    if (window.navigation && typeof window.navigation.addEventListener === "function") {
+      window.navigation.addEventListener("navigatesuccess", onUrlChange);
+    } else {
+      setInterval(onUrlChange, 1000);
+    }
+    window.addEventListener("popstate", onUrlChange);
+    window.addEventListener("hashchange", onUrlChange);
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MESSAGES & SETTINGS CHANGES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  function status() {
+    return {
+      site: SITE,
+      phase: state.phase,
+      dismissed: state.successes,
+      attempts: state.attempts,
+      cssFallback: cssFallbackInjected,
+      enabled: settings.enabled,
+      blocked: settings.blocked,
+    };
+  }
+
+  function listen() {
+    chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+      if (!msg) return false;
+      if (msg.action === "reScan") {
+        // Explicit user request from the popup: always re-arm.
+        if (!canRun()) {
+          if (IS_TOP) sendResponse({ ok: false, ...status() });
+          return false;
+        }
+        state.successes = 0;
+        arm("popup re-scan");
+        if (IS_TOP) sendResponse({ ok: true, ...status() });
+        return false;
+      }
+      if (msg.action === "getStatus" && IS_TOP) {
+        sendResponse(status());
+        return false;
+      }
+      return false;
+    });
+
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === "sync" && changes.enabled) settings.enabled = changes.enabled.newValue !== false;
+      if (area === "local" && changes.blocklist) applyBlocklist(changes.blocklist.newValue);
+      if (area === "local" && changes.debug) debugMode = !!changes.debug.newValue;
+      if (!changes.enabled && !changes.blocklist) return;
+
+      if (canRun()) {
+        if (state.phase === "idle" || state.phase === "stopped") arm("settings changed");
+      } else {
+        stop("disabled");
+        removeCssFallback();
+      }
+    });
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
   // INITIALIZATION
   // ═══════════════════════════════════════════════════════════════════════════
 
-  function init() {
-    try {
-      if (chrome && chrome.storage && chrome.storage.sync) {
-        chrome.storage.sync.get({ enabled: true }, (data) => {
-          if (chrome.runtime.lastError) {
-            // Extension context lost, still try to run
-            startEngine();
-            return;
-          }
-          if (!data.enabled) {
-            extensionEnabled = false;
-            return;
-          }
-          startEngine();
-        });
-        return;
-      }
-    } catch (e) {
-      // Not in extension context (testing)
-    }
-
-    // Fallback: run directly
-    startEngine();
-  }
-
-  function startEngine() {
-    loadState(() => {
-      if (hasBeenHandled || siteBlocked) return;
-      scheduleRetries();
-      startObserver();
-      setupSPADetection();
+  function loadSettings() {
+    return Promise.all([
+      chrome.storage.sync.get({ enabled: true }),
+      chrome.storage.local.get({ blocklist: [], debug: false }),
+    ]).then(([sync, local]) => {
+      settings.enabled = sync.enabled !== false;
+      applyBlocklist(local.blocklist);
+      debugMode = !!local.debug;
     });
   }
 
-  // Start with global error boundary
-  try {
-    init();
-  } catch (e) {
-    logError("Fatal initialization error:", e);
-    // Even if init fails, try a basic scan after a delay
-    setTimeout(() => {
-      try { tryAcceptCookies(); } catch (e2) { /* give up */ }
-    }, 2000);
+  async function init() {
+    if (!extensionAlive()) return;
+    listen();
+    try {
+      await loadSettings();
+    } catch (e) {
+      logError("Could not load settings, using defaults:", e);
+    }
+    if (IS_TOP) sendToBackground("pageStart");
+    setupSPADetection();
+    if (canRun()) arm("page load");
   }
+
+  init().catch((e) => logError("Fatal initialization error:", e));
 })();
