@@ -11,7 +11,7 @@ const root = path.resolve(__dirname, "..");
 const { version } = JSON.parse(fs.readFileSync(path.join(root, "manifest.json"), "utf8"));
 const files = [
   "manifest.json", "background.js", "cmp-api.js", "content.js", "popup.html", "popup.js",
-  "domain.js", "psl-rules.js",
+  "domain.js", "psl-rules.js", "rules.js", "rules/sites.json",
   "icons/icon16.png", "icons/icon48.png", "icons/icon128.png",
 ];
 

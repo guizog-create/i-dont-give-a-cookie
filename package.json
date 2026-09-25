@@ -6,7 +6,7 @@
   "license": "MIT",
   "scripts": {
     "test": "node tests/unit.js && node tests/e2e.js",
-    "lint": "for f in cmp-api.js content.js background.js popup.js domain.js psl-rules.js; do node --check $f || exit 1; done",
+    "lint": "for f in cmp-api.js content.js background.js popup.js domain.js psl-rules.js rules.js; do node --check $f || exit 1; done",
     "pack": "node scripts/pack.js",
     "crawl": "node scripts/crawl.js",
     "update-psl": "node scripts/update-psl.js"

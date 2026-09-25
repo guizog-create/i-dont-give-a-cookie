@@ -1,8 +1,11 @@
-// Fast unit tests (no browser): registrable-domain lookup.
+// Fast unit tests (no browser): registrable-domain lookup and site rules.
 
 "use strict";
 
+const fs = require("fs");
+const path = require("path");
 const { registrableDomain } = require("../domain.js");
+const { validateRules } = require("../rules.js");
 
 const cases = [
   ["www.bbc.co.uk", "bbc.co.uk"],
@@ -33,5 +36,28 @@ for (const [host, want] of cases) {
     console.log(`  ✗ registrableDomain(${host}) = ${got}, expected ${want}`);
   }
 }
-console.log(`unit: ${cases.length - failed}/${cases.length} passed`);
+// Site rules: the shipped file must be fully valid
+const shipped = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "rules", "sites.json"), "utf8"));
+const shippedResult = validateRules(shipped);
+let checks = cases.length + 2;
+if (shippedResult.errors.length) {
+  failed++;
+  console.log(`  \u2717 rules/sites.json has errors:\n    ${shippedResult.errors.join("\n    ")}`);
+}
+// …and the validator must reject bad rules
+const bad = validateRules({ sites: [
+  { domains: ["ok.com"], reason: "fine" },
+  { domains: ["www.x.com"], reason: "www" },
+  { domains: ["https://y.com"], reason: "scheme" },
+  { domains: ["z.com"] },
+  { domains: ["w.com"], reason: "r", mode: "aggressive" },
+  { domains: ["v.com"], reason: "r", accept: "#not-a-list" },
+  { domains: ["ok.com"], reason: "duplicate" },
+] });
+if (bad.valid.length !== 1 || bad.errors.length !== 6) {
+  failed++;
+  console.log(`  \u2717 validator accepted ${bad.valid.length} rule(s) / reported ${bad.errors.length} error(s), expected 1 / 6`);
+}
+
+console.log(`unit: ${checks - failed}/${checks} passed`);
 if (failed) process.exit(1);

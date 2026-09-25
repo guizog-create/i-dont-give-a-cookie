@@ -4,6 +4,8 @@
 
 "use strict";
 
+importScripts("rules.js");
+
 const LOOP_WINDOW_MS = 60 * 1000;      // Look at clicks in the last minute…
 const LOOP_MAX_CLICKS = 6;             // …more than this on one site = a loop
 const LOOP_BACKOFF_MS = 10 * 60 * 1000;
@@ -213,6 +215,19 @@ async function migrateLegacyStorage() {
   await chrome.storage.local.remove([...legacyKeys, "totalDismissed"]);
 }
 
+// rules/sites.json → validated → storage.local.siteRules, which content
+// scripts read with their other settings (no extra round-trip per page).
+async function loadSiteRules() {
+  try {
+    const response = await fetch(chrome.runtime.getURL("rules/sites.json"));
+    const { valid, errors } = self.IDGAC_validateRules(await response.json());
+    if (errors.length) console.warn("[IDGAC] Ignored invalid site rules:", errors);
+    await chrome.storage.local.set({ siteRules: valid });
+  } catch (e) {
+    console.error("[IDGAC] Could not load site rules:", e);
+  }
+}
+
 chrome.runtime.onInstalled.addListener(async (details) => {
   if (details.reason === "install") {
     await chrome.storage.sync.set({ enabled: true });
@@ -220,4 +235,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
   } else if (details.reason === "update") {
     await migrateLegacyStorage();
   }
+  await loadSiteRules();
 });
+
+chrome.runtime.onStartup.addListener(loadSiteRules);

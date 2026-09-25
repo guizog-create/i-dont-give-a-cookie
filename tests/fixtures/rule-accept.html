@@ -1,0 +1,9 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Custom banner</title></head><body>
+<script src="/harness.js"></script>
+<p>Site with a home-made banner whose button text no heuristic should trust.</p>
+<div class="notice-strip" style="position:fixed;bottom:0;left:0;right:0;height:70px;background:#fff;z-index:9999">
+  This site uses cookies. <span id="custom-ok" role="button" tabindex="0" data-track="accept">Sounds good</span>
+</div>
+<div id="info-bar" style="position:fixed;top:0;left:0;right:0;height:40px;background:#ffd;z-index:9999">Cookies are used on this site.</div>
+<script>document.getElementById("custom-ok").onclick = () => document.querySelector(".notice-strip").remove();</script>
+</body></html>

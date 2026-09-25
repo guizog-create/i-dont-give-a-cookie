@@ -285,6 +285,53 @@ const tests = [
     },
   },
   {
+    name: "site rules: shipped rules/sites.json is loaded into storage",
+    async run({ worker }) {
+      const { siteRules } = await worker.evaluate(() => chrome.storage.local.get("siteRules"));
+      const x = (siteRules || []).find((r) => r.domains.includes("x.com"));
+      expect(x && x.mode === "cmp-only", "x.com cmp-only rule missing");
+    },
+  },
+  {
+    name: "site rules: curated accept selector clicks a button heuristics ignore",
+    async run({ page, worker }) {
+      const host = `127.0.0.${hostCounter}`;
+      await worker.evaluate((h) => chrome.storage.local.set({
+        siteRules: [{ domains: [h], mode: "default", accept: ["#custom-ok"], hide: [], reason: "test" }],
+      }), host);
+      await page.goto(url("rule-accept.html"));
+      const ok = await waitFor(async () => (await clicks(page)).accept);
+      expect(ok, "rule's accept selector was not clicked");
+    },
+  },
+  {
+    name: "site rules: hide selectors apply immediately, without clicking",
+    async run({ page, worker }) {
+      const host = `127.0.0.${hostCounter}`;
+      await worker.evaluate((h) => chrome.storage.local.set({
+        siteRules: [{ domains: [h], mode: "cmp-only", accept: [], hide: ["#info-bar"], reason: "test" }],
+      }), host);
+      await page.goto(url("rule-accept.html"));
+      const hidden = await waitFor(() => page.evaluate(
+        () => getComputedStyle(document.getElementById("info-bar")).display === "none"), 2000);
+      expect(hidden, "#info-bar not hidden");
+      await sleep(2000);
+      expect(!(await clicks(page)).accept, "cmp-only site: heuristic clicked 'Sounds good'");
+    },
+  },
+  {
+    name: "site rules: mode off disables the extension on that site",
+    async run({ page, worker }) {
+      const host = `127.0.0.${hostCounter}`;
+      await worker.evaluate((h) => chrome.storage.local.set({
+        siteRules: [{ domains: [h], mode: "off", accept: [], hide: [], reason: "test" }],
+      }), host);
+      await page.goto(url("onetrust.html"));
+      await sleep(3000);
+      expect(!(await clicks(page)).accept, "accepted on a site whose rule is off");
+    },
+  },
+  {
     name: "loop guard: stops clicking when a site reloads and re-shows the banner",
     async run({ page }) {
       await page.goto(url("reload-loop.html"));
@@ -348,6 +395,7 @@ async function resetExtensionState(worker) {
   await worker.evaluate(async () => {
     await chrome.storage.local.clear();
     await chrome.storage.sync.set({ enabled: true });
+    await loadSiteRules(); // as on browser startup
   });
 }
 
