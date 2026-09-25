@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta charset="utf-8"><title>OneTrust, already decided</title></head><body>
+<script src="/harness.js"></script>
+<p>The user already made a choice on a previous visit: the SDK is loaded but its banner stays hidden.</p>
+<div id="onetrust-banner-sdk" style="display:none"><p>We use cookies.</p><button id="onetrust-accept-btn-handler">Accept All Cookies</button></div>
+<script>
+  window.OneTrust = { AllowAll() { window.__clicks.api = (window.__clicks.api || 0) + 1; } };
+</script>
+</body></html>
