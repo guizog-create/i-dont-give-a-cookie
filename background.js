@@ -1,6 +1,6 @@
 // I Don't Give a Cookie - Background Service Worker
-// v2.2.0 - Single writer for statistics, per-tab status for the popup,
-// badge, a click-loop guard, and migration from the v2.1 storage layout.
+// Single writer for statistics, per-tab status and per-site activity for
+// the popup, badge, a click-loop guard, and migration from v2.1 storage.
 
 "use strict";
 
@@ -8,6 +8,7 @@ const LOOP_WINDOW_MS = 60 * 1000;      // Look at clicks in the last minute…
 const LOOP_MAX_CLICKS = 6;             // …more than this on one site = a loop
 const LOOP_BACKOFF_MS = 10 * 60 * 1000;
 const MAX_TRACKED_SITES = 500;
+const MAX_ACTIVITY_ENTRIES = 20;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SERIALIZED STORAGE ACCESS
@@ -50,6 +51,18 @@ function updateTab(tabId, mutate) {
     const entry = data[key] || { dismissed: 0, cssFallback: false };
     mutate(entry);
     await chrome.storage.session.set({ [key]: entry });
+  });
+}
+
+// Recent actions per site (memory-only storage.session, cleared when the
+// browser closes). Shown in the popup and read by the crawler.
+function logActivity(site, entry) {
+  if (!site) return Promise.resolve();
+  const key = `activity:${site}`;
+  return serialized(async () => {
+    const data = await chrome.storage.session.get(key);
+    const list = (data[key] || []).concat({ t: Date.now(), ...entry }).slice(-MAX_ACTIVITY_ENTRIES);
+    await chrome.storage.session.set({ [key]: list });
   });
 }
 
@@ -109,6 +122,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return false;
 
     case "bannerDismissed":
+      logActivity(site, { event: "dismissed", strategy: String(msg.strategy || "") });
       updateStats((stats) => {
         stats.total++;
         const entry = stats.sites[site] || { count: 0, last: 0 };
@@ -123,13 +137,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return false;
 
     case "cssFallbackUsed":
+      logActivity(site, { event: "cssFallback" });
       updateStats((stats) => { stats.cssFallback++; });
       if (tabId != null) updateTab(tabId, (entry) => { entry.cssFallback = true; });
       return false;
 
+    case "frameFallback": {
+      // A CMP iframe gave up; its element lives in the top frame
+      let origin = null;
+      try {
+        origin = new URL(sender.url).origin;
+      } catch (e) { /* no url */ }
+      if (tabId != null && origin && sender.frameId !== 0) {
+        chrome.tabs.sendMessage(tabId, { action: "hideFrame", origin }, { frameId: 0 })
+          .catch(() => {}); // top frame may have navigated away
+      }
+      return false;
+    }
+
     case "requestClick":
       requestClick(site)
-        .then((allowed) => sendResponse({ allowed }))
+        .then((allowed) => {
+          logActivity(site, {
+            event: allowed ? "action" : "loopGuard",
+            strategy: String(msg.strategy || "").slice(0, 120),
+            label: String(msg.label || "").slice(0, 60),
+            frame: sender.frameId === 0 ? "top" : "iframe",
+          });
+          sendResponse({ allowed });
+        })
         .catch(() => sendResponse({ allowed: true }));
       return true; // async response
 
