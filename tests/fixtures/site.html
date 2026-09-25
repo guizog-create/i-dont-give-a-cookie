@@ -5,5 +5,9 @@
 <script>
   // Cross-origin CMP iframe, like Sourcepoint (privacy-mgmt.com) or TrustArc.
   document.getElementById("cmp").src = "http://localhost:" + location.port + "/cmp-frame.html";
+  // Like Sourcepoint: the frame reports the choice, the parent removes it.
+  window.addEventListener("message", (e) => {
+    if (e.data && e.data.idgacTest === "accept") document.getElementById("cmp").remove();
+  });
 </script>
 </body></html>

@@ -1174,6 +1174,26 @@
     }
   }
 
+  // Top frame: hide the floating iframe(s) from `origin` whose consent UI
+  // could not be dismissed from inside. In-content embeds are left alone.
+  function hideFrameFromOrigin(origin) {
+    if (!IS_TOP || !canRun()) return false;
+    let hidden = false;
+    for (const frame of queryAllDeep(collectRoots(), "iframe")) {
+      let frameOrigin = null;
+      try {
+        frameOrigin = new URL(frame.src, location.href).origin;
+      } catch (e) { /* skip */ }
+      if (frameOrigin !== origin || !isVisible(frame)) continue;
+      const box = floatingAncestor(frame);
+      if (!box) continue;
+      box.setAttribute("data-idgac-hidden", "");
+      hidden = true;
+    }
+    if (hidden) injectCssFallback(null);
+    return hidden;
+  }
+
   function removeCssFallback() {
     const style = document.getElementById("idgac-css-fallback");
     if (style) style.remove();
@@ -1252,7 +1272,10 @@
     if (!target) return;
 
     state.phase = "clicking";
-    sendToBackground("requestClick").then((res) => {
+    sendToBackground("requestClick", {
+      strategy: target.strategy,
+      label: target.api ? "" : buttonText(target.el).slice(0, 60),
+    }).then((res) => {
       if (state.phase !== "clicking") return;
       if (res && res.allowed === false) {
         log("Loop guard: too many clicks on this site recently, backing off");
@@ -1326,6 +1349,9 @@
     }
     log("Click attempts exhausted, using CSS fallback");
     injectCssFallback(target);
+    // Inside a CMP iframe we can only hide our own content; ask the top
+    // frame (via the background) to hide the iframe element itself.
+    if (!IS_TOP) sendToBackground("frameFallback");
     stop("done");
   }
 
@@ -1435,6 +1461,10 @@
         state.successes = 0;
         arm("popup re-scan");
         if (IS_TOP) sendResponse({ ok: true, ...status() });
+        return false;
+      }
+      if (msg.action === "hideFrame" && IS_TOP && typeof msg.origin === "string") {
+        sendResponse({ ok: hideFrameFromOrigin(msg.origin) });
         return false;
       }
       if (msg.action === "getStatus" && IS_TOP) {

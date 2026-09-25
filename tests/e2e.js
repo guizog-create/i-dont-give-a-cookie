@@ -209,6 +209,19 @@ const tests = [
     },
   },
   {
+    name: "broken CMP iframe: top frame hides the frame, leaves in-content embeds",
+    async run({ page }) {
+      await page.goto(url("site-dead.html"));
+      const wrapperHidden = () => page.evaluate(
+        () => getComputedStyle(document.getElementById("sp_wrapper")).display === "none");
+      const ok = await waitFor(wrapperHidden, 15000);
+      expect(ok, "floating CMP iframe still covers the page");
+      const embedShown = await page.evaluate(
+        () => getComputedStyle(document.getElementById("embed")).display !== "none");
+      expect(embedShown, "in-content iframe from the same origin was hidden too");
+    },
+  },
+  {
     name: "blocklist also applies to CMP iframes inside the blocked site",
     async run({ page, worker }) {
       const host = `127.0.0.${hostCounter}`;
