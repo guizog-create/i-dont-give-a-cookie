@@ -255,6 +255,28 @@ const tests = [
     },
   },
   {
+    name: "popup: Block covers the registrable domain, Allow undoes it",
+    async run({ page, worker }) {
+      const extId = new URL(worker.url()).host;
+      // The popup reads the active tab; point it at a pretend news.bbc.co.uk tab
+      await page.addInitScript(() => {
+        chrome.tabs.query = async () => [{ id: 999999, url: "https://news.bbc.co.uk/article" }];
+      });
+      await page.goto(`chrome-extension://${extId}/popup.html`);
+      await waitFor(async () => (await page.textContent("#blockSiteBtn")) === "Block bbc.co.uk", 3000);
+      expect((await page.textContent("#blockSiteBtn")) === "Block bbc.co.uk",
+        `button says "${await page.textContent("#blockSiteBtn")}"`);
+      await page.click("#blockSiteBtn");
+      await waitFor(async () => (await worker.evaluate(() => chrome.storage.local.get("blocklist"))).blocklist.length, 3000);
+      let { blocklist } = await worker.evaluate(() => chrome.storage.local.get("blocklist"));
+      expect(JSON.stringify(blocklist) === '["bbc.co.uk"]', `blocklist is ${JSON.stringify(blocklist)}`);
+      await page.click("#allowSiteBtn");
+      await waitFor(async () => !(await worker.evaluate(() => chrome.storage.local.get("blocklist"))).blocklist.length, 3000);
+      ({ blocklist } = await worker.evaluate(() => chrome.storage.local.get("blocklist")));
+      expect(!blocklist.length, `Allow left ${JSON.stringify(blocklist)}`);
+    },
+  },
+  {
     name: "SAFETY: never calls a CMP API when its banner isn't showing",
     async run({ page }) {
       await page.goto(url("api-hidden.html"));

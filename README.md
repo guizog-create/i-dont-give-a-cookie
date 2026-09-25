@@ -61,7 +61,7 @@ Keyword matching respects word boundaries for space-separated scripts, so "OK" d
 | Control | Description |
 |---------|-------------|
 | Extension Enabled | Global on/off toggle (applies to open tabs immediately) |
-| Block This Site | Disable the extension on the current site and its subdomains |
+| Block *domain* | Disable the extension on the site's registrable domain (e.g. `bbc.co.uk` from `news.bbc.co.uk`, via the Public Suffix List) and all its subdomains |
 | Allow This Site | Re-enable it, including removing any parent-domain block |
 | Re-scan | Force the page (and its CMP iframes) to look again |
 | Debug Mode | Log detection decisions to the page console |
@@ -94,6 +94,7 @@ npm test -- --slow   # also the SPA test (~40 s)
 npm test -- --perf   # also print the main-thread cost benchmark
 npm run lint         # syntax check
 npm run pack         # dist/i-dont-give-a-cookie-<version>.zip for the Chrome Web Store
+npm run update-psl   # regenerate psl-rules.js after bumping the psl dev dependency
 ```
 
 Tests live in `tests/`: each fixture in `tests/fixtures/` is a small page reproducing one real-world banner pattern or a false-positive trap, and `tests/e2e.js` asserts exactly what got clicked. When you add a CMP or fix a site, add a fixture for it.

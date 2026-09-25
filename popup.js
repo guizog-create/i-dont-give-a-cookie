@@ -25,6 +25,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   };
 
   let site = "";
+  let blockScope = ""; // registrable domain, e.g. "bbc.co.uk" for news.bbc.co.uk
   let tabId = null;
 
   // ─── Settings ────────────────────────────────────────────────────────
@@ -91,7 +92,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (url && (url.protocol === "http:" || url.protocol === "https:")) {
     tabId = tab.id;
     site = normalizeHost(url.hostname);
+    blockScope = normalizeHost(globalThis.IDGAC_registrableDomain(site)) || site;
     siteNameEl.textContent = site;
+    blockSiteBtn.textContent = `Block ${blockScope}`;
+    blockSiteBtn.title = `Disable on ${blockScope} and all its subdomains`;
     await refreshSite();
   } else {
     siteNameEl.textContent = "N/A";
@@ -107,7 +111,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   blockSiteBtn.addEventListener("click", async () => {
     if (!site) return;
     const { blocklist = [] } = await chrome.storage.local.get("blocklist");
-    if (!blocklist.some((p) => hostMatches(site, p))) blocklist.push(site);
+    if (!blocklist.some((p) => hostMatches(site, p))) blocklist.push(blockScope);
     await chrome.storage.local.set({ blocklist });
     refreshSite();
   });
