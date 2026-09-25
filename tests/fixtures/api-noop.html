@@ -1,0 +1,14 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Didomi API no-op</title></head><body>
+<script src="/harness.js"></script>
+<p>Article.</p>
+<div id="didomi-host"><div id="didomi-notice" style="position:fixed;bottom:0;left:0;right:0;z-index:99999;background:#fff;padding:20px">
+  <p>Nous utilisons des cookies.</p>
+  <button id="didomi-notice-agree-button" data-track="button">Accepter et fermer</button>
+</div></div>
+<script>
+  // API exists but does not close the notice (e.g. SDK half-initialised):
+  // the extension must fall back to clicking.
+  window.Didomi = { setUserAgreeToAll() { window.__clicks.api = (window.__clicks.api || 0) + 1; } };
+  document.getElementById("didomi-notice-agree-button").onclick = () => document.getElementById("didomi-notice").remove();
+</script>
+</body></html>

@@ -1,0 +1,18 @@
+<!doctype html><html><head><meta charset="utf-8"><title>OneTrust API</title></head><body>
+<script src="/harness.js"></script>
+<p>Article.</p>
+<div id="onetrust-banner-sdk" style="position:fixed;bottom:0;left:0;right:0;z-index:2147483645;background:#fff;padding:20px">
+  <p>We use cookies to personalise content and ads.</p>
+  <button id="onetrust-accept-btn-handler" data-track="button">Accept All Cookies</button>
+</div>
+<script>
+  // Stand-in for the OneTrust SDK: the button is dead, only the API works.
+  document.getElementById("onetrust-accept-btn-handler").addEventListener("click", (e) => e.stopImmediatePropagation());
+  window.OneTrust = {
+    AllowAll() {
+      window.__clicks.api = (window.__clicks.api || 0) + 1;
+      document.getElementById("onetrust-banner-sdk").remove();
+    },
+  };
+</script>
+</body></html>

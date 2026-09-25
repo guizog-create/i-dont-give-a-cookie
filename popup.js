@@ -1,190 +1,148 @@
 // I Don't Give a Cookie - Popup Controller
-// v2.0.0
 
-document.addEventListener("DOMContentLoaded", () => {
-  const enableToggle = document.getElementById("enableToggle");
-  const debugToggle = document.getElementById("debugToggle");
-  const totalDismissedEl = document.getElementById("totalDismissed");
-  const sitesCountEl = document.getElementById("sitesCount");
-  const siteNameEl = document.getElementById("siteName");
-  const siteDetailEl = document.getElementById("siteDetail");
-  const statusDot = document.getElementById("statusDot");
-  const blockSiteBtn = document.getElementById("blockSiteBtn");
-  const allowSiteBtn = document.getElementById("allowSiteBtn");
-  const reScanBtn = document.getElementById("reScanBtn");
+"use strict";
 
-  let currentHostname = "";
-  let currentTabId = null;
+document.addEventListener("DOMContentLoaded", async () => {
+  const $ = (id) => document.getElementById(id);
+  const enableToggle = $("enableToggle");
+  const debugToggle = $("debugToggle");
+  const totalDismissedEl = $("totalDismissed");
+  const sitesCountEl = $("sitesCount");
+  const siteNameEl = $("siteName");
+  const siteDetailEl = $("siteDetail");
+  const statusDot = $("statusDot");
+  const blockSiteBtn = $("blockSiteBtn");
+  const allowSiteBtn = $("allowSiteBtn");
+  const reScanBtn = $("reScanBtn");
 
-  // ─── Load Settings ───────────────────────────────────────────────────
+  $("version").textContent = "v" + chrome.runtime.getManifest().version;
 
-  chrome.storage.sync.get({ enabled: true }, (data) => {
-    enableToggle.checked = data.enabled;
-  });
+  // Same normalization as content.js, so "Allow" always undoes "Block"
+  const normalizeHost = (host) => (host || "").toLowerCase().replace(/^www\./, "");
+  const hostMatches = (site, pattern) => {
+    const p = normalizeHost(pattern);
+    return !!p && (site === p || site.endsWith("." + p));
+  };
 
-  chrome.storage.local.get(["debug", "blocklist"], (data) => {
-    debugToggle.checked = data.debug || false;
-  });
+  let site = "";
+  let blockScope = ""; // registrable domain, e.g. "bbc.co.uk" for news.bbc.co.uk
+  let tabId = null;
 
-  // ─── Load Stats ──────────────────────────────────────────────────────
+  // ─── Settings ────────────────────────────────────────────────────────
 
-  function loadStats() {
-    chrome.storage.local.get(null, (data) => {
-      let total = 0;
-      let sites = 0;
-
-      for (const key of Object.keys(data)) {
-        if (key.startsWith("__IDGAC__")) {
-          const entry = data[key];
-          if (entry && entry.count > 0) {
-            total += entry.count;
-            sites++;
-          }
-        }
-      }
-
-      // Also check background stats
-      if (data.totalDismissed && data.totalDismissed > total) {
-        total = data.totalDismissed;
-      }
-
-      totalDismissedEl.textContent = total;
-      sitesCountEl.textContent = sites;
-    });
-  }
-
-  loadStats();
-
-  // ─── Current Site Status ─────────────────────────────────────────────
-
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    if (!tabs || !tabs[0]) return;
-
-    const tab = tabs[0];
-    currentTabId = tab.id;
-
-    try {
-      const url = new URL(tab.url);
-      currentHostname = url.hostname;
-      siteNameEl.textContent = currentHostname;
-
-      // Check if site is blocked
-      chrome.storage.local.get(["blocklist"], (data) => {
-        const blocklist = data.blocklist || [];
-        const isBlocked = blocklist.some(
-          (p) => currentHostname === p || currentHostname.endsWith("." + p)
-        );
-
-        if (isBlocked) {
-          statusDot.className = "dot blocked";
-          siteDetailEl.textContent = "Blocked — extension disabled here";
-          blockSiteBtn.style.display = "none";
-          allowSiteBtn.style.display = "inline-flex";
-        } else {
-          // Check if banner was handled on this site
-          const stateKey = "__IDGAC__" + currentHostname;
-          chrome.storage.local.get([stateKey], (stateData) => {
-            if (stateData && stateData[stateKey] && stateData[stateKey].count > 0) {
-              statusDot.className = "dot active";
-              siteDetailEl.textContent = `${stateData[stateKey].count} banner(s) dismissed`;
-            } else {
-              statusDot.className = "dot idle";
-              siteDetailEl.textContent = "No banners detected";
-            }
-          });
-        }
-      });
-    } catch (e) {
-      siteNameEl.textContent = "N/A";
-      siteDetailEl.textContent = "Cannot access this page";
-    }
-  });
-
-  // ─── Event Handlers ──────────────────────────────────────────────────
+  const { enabled } = await chrome.storage.sync.get({ enabled: true });
+  enableToggle.checked = enabled !== false;
+  const { debug } = await chrome.storage.local.get({ debug: false });
+  debugToggle.checked = !!debug;
 
   enableToggle.addEventListener("change", () => {
     chrome.storage.sync.set({ enabled: enableToggle.checked });
+    refreshSite();
   });
 
   debugToggle.addEventListener("change", () => {
     chrome.storage.local.set({ debug: debugToggle.checked });
   });
 
-  blockSiteBtn.addEventListener("click", () => {
-    if (!currentHostname) return;
+  // ─── Statistics ──────────────────────────────────────────────────────
 
-    chrome.storage.local.get(["blocklist"], (data) => {
-      const blocklist = data.blocklist || [];
-      if (!blocklist.includes(currentHostname)) {
-        blocklist.push(currentHostname);
-        chrome.storage.local.set({ blocklist }, () => {
-          // Notify content script
-          if (currentTabId) {
-            chrome.tabs.sendMessage(currentTabId, {
-              action: "toggleSite",
-              blocked: true,
-            }, () => {
-              if (chrome.runtime.lastError) { /* ignore */ }
-            });
-          }
-          // Update UI
-          statusDot.className = "dot blocked";
-          siteDetailEl.textContent = "Blocked — extension disabled here";
-          blockSiteBtn.style.display = "none";
-          allowSiteBtn.style.display = "inline-flex";
-        });
-      }
-    });
+  async function loadStats() {
+    const { stats } = await chrome.storage.local.get("stats");
+    totalDismissedEl.textContent = (stats && stats.total) || 0;
+    sitesCountEl.textContent = stats ? Object.keys(stats.sites || {}).length : 0;
+  }
+
+  // ─── Current site ────────────────────────────────────────────────────
+
+  function setStatus(dot, detail) {
+    statusDot.className = "dot " + dot;
+    siteDetailEl.textContent = detail;
+  }
+
+  function showBlocked(blocked) {
+    blockSiteBtn.style.display = blocked ? "none" : "inline-flex";
+    allowSiteBtn.style.display = blocked ? "inline-flex" : "none";
+  }
+
+  async function refreshSite() {
+    if (!site) return;
+    const { blocklist = [] } = await chrome.storage.local.get("blocklist");
+    const blocked = blocklist.some((p) => hostMatches(site, p));
+    showBlocked(blocked);
+
+    if (blocked) return setStatus("blocked", "Blocked: extension disabled here");
+    const { siteRules = [] } = await chrome.storage.local.get("siteRules");
+    const rule = siteRules.find((r) => r.domains.some((d) => hostMatches(site, d)));
+    if (rule && rule.mode === "off") return setStatus("blocked", `Built-in rule: off (${rule.reason})`);
+    if (!enableToggle.checked) return setStatus("idle", "Extension is turned off");
+
+    const tab = await chrome.runtime.sendMessage({ action: "getTabStatus", tabId }).catch(() => null);
+    if (tab && tab.dismissed > 0) {
+      setStatus("active", `${tab.dismissed} banner(s) accepted on this page`);
+    } else if (tab && tab.cssFallback) {
+      setStatus("active", "Banner hidden (its button did not respond)");
+    } else {
+      setStatus("idle", "No banner handled on this page");
+    }
+  }
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let url = null;
+  try {
+    url = tab && tab.url ? new URL(tab.url) : null;
+  } catch (e) { /* unparsable */ }
+
+  if (url && (url.protocol === "http:" || url.protocol === "https:")) {
+    tabId = tab.id;
+    site = normalizeHost(url.hostname);
+    blockScope = normalizeHost(globalThis.IDGAC_registrableDomain(site)) || site;
+    siteNameEl.textContent = site;
+    blockSiteBtn.textContent = `Block ${blockScope}`;
+    blockSiteBtn.title = `Disable on ${blockScope} and all its subdomains`;
+    await refreshSite();
+  } else {
+    siteNameEl.textContent = "N/A";
+    setStatus("idle", "Extension doesn't run on this page");
+    blockSiteBtn.disabled = true;
+    reScanBtn.disabled = true;
+  }
+
+  // ─── Actions ─────────────────────────────────────────────────────────
+  // Content scripts listen to storage changes, so no tab messaging is
+  // needed for block/allow; the page reacts immediately.
+
+  blockSiteBtn.addEventListener("click", async () => {
+    if (!site) return;
+    const { blocklist = [] } = await chrome.storage.local.get("blocklist");
+    if (!blocklist.some((p) => hostMatches(site, p))) blocklist.push(blockScope);
+    await chrome.storage.local.set({ blocklist });
+    refreshSite();
   });
 
-  allowSiteBtn.addEventListener("click", () => {
-    if (!currentHostname) return;
-
-    chrome.storage.local.get(["blocklist"], (data) => {
-      let blocklist = data.blocklist || [];
-      blocklist = blocklist.filter((p) => p !== currentHostname);
-      chrome.storage.local.set({ blocklist }, () => {
-        // Notify content script
-        if (currentTabId) {
-          chrome.tabs.sendMessage(currentTabId, {
-            action: "toggleSite",
-            blocked: false,
-          }, () => {
-            if (chrome.runtime.lastError) { /* ignore */ }
-          });
-        }
-        // Update UI
-        statusDot.className = "dot idle";
-        siteDetailEl.textContent = "Extension active";
-        blockSiteBtn.style.display = "inline-flex";
-        allowSiteBtn.style.display = "none";
-      });
-    });
+  allowSiteBtn.addEventListener("click", async () => {
+    if (!site) return;
+    const { blocklist = [] } = await chrome.storage.local.get("blocklist");
+    // Remove every entry that covers this site (e.g. "example.com" when on
+    // "shop.example.com"), otherwise "Allow" would silently do nothing.
+    await chrome.storage.local.set({ blocklist: blocklist.filter((p) => !hostMatches(site, p)) });
+    refreshSite();
   });
 
   reScanBtn.addEventListener("click", () => {
-    if (!currentTabId) return;
-
-    chrome.tabs.sendMessage(currentTabId, { action: "reScan" }, (response) => {
-      if (chrome.runtime.lastError) {
-        siteDetailEl.textContent = "Could not reach page";
+    if (tabId == null) return;
+    setStatus("idle", "Re-scanning…");
+    // Sent to every frame (CMP iframes re-arm too); only the top frame replies
+    chrome.tabs.sendMessage(tabId, { action: "reScan" }, (response) => {
+      if (chrome.runtime.lastError || !response) {
+        setStatus("idle", "Could not reach the page (reload it first)");
         return;
       }
-      siteDetailEl.textContent = "Re-scanning...";
-      // Refresh stats after a delay
-      setTimeout(loadStats, 2000);
       setTimeout(() => {
-        const stateKey = "__IDGAC__" + currentHostname;
-        chrome.storage.local.get([stateKey], (stateData) => {
-          if (stateData && stateData[stateKey] && stateData[stateKey].count > 0) {
-            statusDot.className = "dot active";
-            siteDetailEl.textContent = `${stateData[stateKey].count} banner(s) dismissed`;
-          } else {
-            statusDot.className = "dot idle";
-            siteDetailEl.textContent = "No banners detected";
-          }
-        });
+        loadStats();
+        refreshSite();
       }, 3000);
     });
   });
+
+  loadStats();
 });

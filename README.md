@@ -1,21 +1,25 @@
 # I Don't Give a Cookie
 
-A bulletproof Chrome extension that automatically accepts cookie consent banners on virtually any website. Supports 30+ languages, 40+ Consent Management Platforms, with click verification, CSS fallback, SPA support, and per-site controls.
+A Chrome extension that automatically accepts cookie consent banners on virtually any website. It covers 27 languages and 40+ Consent Management Platforms, verifies each click, falls back to CSS, supports SPAs, and has per-site controls. It is also careful never to click anything that isn't a cookie banner.
 
 ## Features
 
-- **Universal Detection Engine** — 6-strategy pipeline that handles known CMPs, heuristic banners, ARIA attributes, overlays, iframes, and full-page scans
-- **40+ CMP Platforms** — OneTrust, Cookiebot, Didomi, Quantcast, TrustArc, Usercentrics, CookieYes, Osano, Complianz, Klaro, Iubenda, Termly, HubSpot, Sourcepoint, Consentmanager.net, Tarteaucitron, and many more
-- **30+ Languages** — English, French, German, Spanish, Italian, Portuguese, Dutch, Polish, Swedish, Danish, Norwegian, Finnish, Czech, Romanian, Hungarian, Greek, Turkish, Russian, Ukrainian, Japanese, Chinese, Korean, Arabic, Thai, Vietnamese, Indonesian, Hindi
-- **Click Verification** — Confirms banners are actually dismissed after clicking; retries with alternative methods if not
-- **CSS Fallback** — If clicks fail after multiple attempts, hides banners via CSS injection as a safety net
-- **SPA Support** — Detects single-page application navigation (History API, popstate, hashchange) and re-scans for new banners
-- **Background Service Worker** — Coordinates across tabs, manages badge notifications, handles navigation events
-- **Per-Site Controls** — Block/allow the extension on specific sites from the popup
-- **Shadow DOM Traversal** — Pierces through shadow roots used by modern web components
-- **Anti-False-Positive Guards** — Won't click CAPTCHAs, robot checks, social buttons, newsletter signups, or navigation links
-- **Debug Mode** — Toggle console logging for troubleshooting
-- **Zero External Dependencies** — Pure JavaScript, no build step required
+- **Two-stage detection**: exact selectors for 40+ known CMPs first, then a heuristic that starts from text mentioning cookies/consent and walks up to the floating box (fixed, sticky or dialog) that contains it
+- **40+ CMP platforms**: OneTrust, Cookiebot, Didomi, Quantcast, TrustArc, Usercentrics, CookieYes, Osano, Complianz, Klaro, Iubenda, Termly, HubSpot, Sourcepoint, Consentmanager.net, Tarteaucitron, and many more
+- **27 languages**: English, French, German, Spanish, Italian, Portuguese, Dutch, Polish, Swedish, Danish, Norwegian, Finnish, Czech, Romanian, Hungarian, Greek, Turkish, Russian, Ukrainian, Japanese, Chinese, Korean, Arabic, Thai, Vietnamese, Indonesian, Hindi
+- **Click verification**: one activation per attempt, then it checks that the banner actually went away (fade-out animations are allowed for). It retries up to 3 times
+- **CSS fallback**: if the CMP's button is broken, it hides the banner *and* its backdrop and restores scrolling
+- **SPA support**: re-scans after client-side navigation (Navigation API, `popstate`, `hashchange`)
+- **Cross-origin CMP iframes**: Sourcepoint, TrustArc and similar are handled inside their own frames, and state is attributed to the top-level site
+- **Loop guard**: if a site reloads and shows the banner again, it stops after 6 clicks per minute and backs off for 10 minutes
+- **Per-site controls**: block/allow from the popup. The page reacts immediately and the setting also covers CMP iframes on that site
+- **Shadow DOM**: open shadow roots, plus closed ones on custom elements via `chrome.dom`
+- **Safety guards**: never answers non-cookie dialogs ("Delete account?", sign-up or Terms dialogs, even ones that say "consent", feedback polls), never answers age gates, never touches boxes with form fields, and never clicks "reject/settings/subscribe/sign in", real navigation links, checkboxes, disabled buttons or CAPTCHA widgets
+- **CMP JavaScript APIs**: for OneTrust, Cookiebot, Didomi, Usercentrics, Klaro, consentmanager, Cookie-Script, tarteaucitron and CookieConsent it calls the platform's own "accept all" (only while its banner is visible), then verifies, and falls back to clicking
+- **Site rules as data**: per-site fixes in `rules/sites.json` (see [rules/README.md](rules/README.md))
+- **Real-site crawler**: `npm run crawl` compares ~230 European sites with and without the extension and flags anything suspicious
+- **Debug mode**: logs every decision to the page console with the `[IDGAC]` prefix
+- **No runtime dependencies**: plain JavaScript, no build step
 
 ## Installation
 
@@ -25,94 +29,54 @@ A bulletproof Chrome extension that automatically accepts cookie consent banners
 4. Click "Load unpacked" and select the repository folder
 5. The extension icon appears in your toolbar
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────┐
-│                    Background Service Worker              │
-│  - Tab navigation detection (SPA support)                │
-│  - Badge management                                      │
-│  - Cross-tab state coordination                          │
-│  - Message routing                                       │
-└────────────────────────┬────────────────────────────────┘
-                         │ chrome.runtime messages
-┌────────────────────────▼────────────────────────────────┐
-│                    Content Script (per tab)               │
-│                                                          │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │ Detection Pipeline (runs in order)               │    │
-│  │                                                  │    │
-│  │  1. CMP-Specific Selectors (100+ selectors)     │    │
-│  │  2. Container-Based Detection (heuristic)        │    │
-│  │  3. ARIA/Attribute Detection                     │    │
-│  │  4. Overlay/Backdrop Detection                   │    │
-│  │  5. Iframe Consent Detection                     │    │
-│  │  6. Full-Page Scan (strict, last resort)         │    │
-│  └─────────────────────────────────────────────────┘    │
-│                                                          │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │ Click Engine                                     │    │
-│  │  - Full mouse event sequence (pointer + mouse)   │    │
-│  │  - Direct .click() fallback                      │    │
-│  │  - Keyboard Enter fallback                       │    │
-│  │  - Post-click verification (600ms)               │    │
-│  │  - Retry up to 3 times                           │    │
-│  │  - CSS fallback on exhaustion                    │    │
-│  └─────────────────────────────────────────────────┘    │
-│                                                          │
-│  ┌─────────────────────────────────────────────────┐    │
-│  │ Observation & Scheduling                         │    │
-│  │  - MutationObserver (childList, debounced)       │    │
-│  │  - Progressive retries (100ms → 25s)             │    │
-│  │  - SPA navigation detection (History API patch)  │    │
-│  │  - Auto-disconnect after 30s                     │    │
-│  └─────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────┘
-
-┌─────────────────────────────────────────────────────────┐
-│                    Popup UI                               │
-│  - Global enable/disable toggle                          │
-│  - Per-site block/allow controls                         │
-│  - Re-scan button                                        │
-│  - Statistics (banners dismissed, sites handled)          │
-│  - Debug mode toggle                                     │
-└─────────────────────────────────────────────────────────┘
-```
-
 ## How It Works
 
-The extension runs a content script on every page that executes a 6-strategy detection pipeline. Each strategy is progressively less specific but covers more edge cases:
+```
+page load / SPA navigation / popup "Re-scan"
+        │
+        ▼
+  ┌──────────── scanning (30 s window) ────────────┐
+  │ triggers: retry timers + MutationObserver      │
+  │ (throttled; full scan only when added nodes    │
+  │  mention cookies/consent)                      │
+  │                                                │
+  │ 0. Site rule accept selectors (rules/sites.json)│
+  │    CMP JavaScript API if its banner is visible │
+  │ 1. Known CMP accept selectors                  │
+  │    (gated: must sit inside a consent UI)       │
+  │ 2. Consent containers                          │
+  │    known CMP containers + text-anchored        │
+  │    floating boxes → best-scoring accept button │
+  └──────────────────────┬─────────────────────────┘
+                         │ target found
+                         ▼
+          background loop guard → single click
+                         │
+                         ▼
+     verifying (0.6–2 s): gone? → done (report stats)
+                          still there? → retry (≤3) → CSS fallback
+```
 
-**Strategy 1 (CMP Selectors)** targets known platforms by their exact DOM selectors. This is the fastest and most reliable method, handling the majority of sites.
+Keyword matching respects word boundaries for space-separated scripts, so "OK" doesn't match "Book now" and "agree" doesn't match "disagree". Words that are too ambiguous on their own ("OK", "Yes", "Close", "Continue") only count when they are the button's entire label, and only inside a container that talks about cookies or consent.
 
-**Strategy 2 (Container Detection)** finds banner-like containers by their class/ID patterns, position (fixed/sticky), z-index, and cookie-related text content, then locates the accept button within.
-
-**Strategy 3 (ARIA/Attributes)** finds buttons via `aria-label`, `data-action`, `data-consent`, and similar attributes.
-
-**Strategy 4 (Overlay Detection)** identifies full-screen overlays containing consent text and finds the accept button inside.
-
-**Strategy 5 (Iframe Consent)** handles CMPs that render inside iframes (same-origin only due to browser security).
-
-**Strategy 6 (Full-Page Scan)** is the last resort — scans all visible buttons for strong "Accept All" phrases only, with strict filtering to prevent false positives.
-
-After clicking, the **Click Verification** system waits 600ms and checks if the banner is still visible. If so, it retries with alternative click methods. After 3 failed attempts, it injects **CSS rules** to force-hide the banner and restore page scrolling.
+**Background service worker**: the single writer for statistics (no lost updates when several tabs report at once), per-tab status for the popup (in `storage.session`), the badge, the loop guard, and migration from the v2.1 storage layout.
 
 ## Popup Controls
 
 | Control | Description |
 |---------|-------------|
-| Extension Enabled | Global on/off toggle |
-| Block This Site | Disable the extension on the current domain |
-| Allow This Site | Re-enable after blocking |
-| Re-scan | Force the extension to re-check for banners |
-| Debug Mode | Enable console logging for troubleshooting |
+| Extension Enabled | Global on/off toggle (applies to open tabs immediately) |
+| Block *domain* | Disable the extension on the site's registrable domain (e.g. `bbc.co.uk` from `news.bbc.co.uk`, via the Public Suffix List) and all its subdomains |
+| Allow This Site | Re-enable it, including removing any parent-domain block |
+| Re-scan | Force the page (and its CMP iframes) to look again |
+| Debug Mode | Log detection decisions to the page console |
 
 ## Privacy
 
 This extension:
 - Runs entirely locally in your browser
 - Makes zero network requests
-- Stores only minimal state (click counts per domain, blocklist)
+- Stores only a dismissal count per site, the blocklist and your settings
 - Does not collect, transmit, or share any data
 - Has no analytics, telemetry, or tracking
 
@@ -120,15 +84,28 @@ This extension:
 
 | Permission | Why |
 |-----------|-----|
-| `storage` | Save enabled state, per-site click counts, blocklist, and debug preference |
-| `tabs` | Detect tab navigation for SPA support and show current site info in popup |
-| `activeTab` | Access the current tab's URL to display site status in popup |
+| `storage` | Settings, blocklist, per-site dismissal counts |
+| `activeTab` | Lets the popup read the current tab's address when you open it |
+| Content script on `<all_urls>` | Banners can appear on any site |
 
 ## Development
 
-No build step required. Edit the source files directly and reload the extension in `chrome://extensions/`.
+No build step. Edit the source files and reload the extension in `chrome://extensions/`.
 
-To enable debug logging, toggle "Debug Mode" in the popup. All detection actions will be logged to the browser console with the `[IDGAC]` prefix.
+```sh
+npm install          # installs Playwright (dev only)
+npm test             # end-to-end tests in real Chromium with the extension loaded
+npm test -- --slow   # also the SPA test (~40 s)
+npm test -- --perf   # also print the main-thread cost benchmark
+npm run lint         # syntax check
+npm run crawl        # real-site crawl → crawl-report/report.html (run from an EU network)
+npm run pack         # dist/i-dont-give-a-cookie-<version>.zip for the Chrome Web Store
+npm run update-psl   # regenerate psl-rules.js after bumping the psl dev dependency
+```
+
+Per-site fixes are data, not code: see [`rules/README.md`](rules/README.md) for the `rules/sites.json` format (`mode`, `accept`, `hide`, `reason`).
+
+Tests live in `tests/`: each fixture in `tests/fixtures/` is a small page reproducing one real-world banner pattern or a false-positive trap, and `tests/e2e.js` asserts exactly what got clicked. When you add a CMP or fix a site, add a fixture for it.
 
 ## License
 

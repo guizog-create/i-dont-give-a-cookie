@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><title>OneTrust</title></head><body>
+<script src="/harness.js"></script>
+<article><h1>News</h1><p>Some article text.</p></article>
+<div id="onetrust-banner-sdk" style="position:fixed;bottom:0;left:0;right:0;z-index:2147483645;background:#fff;padding:20px">
+  <p>We use cookies to personalise content and ads.</p>
+  <button id="onetrust-accept-btn-handler" data-track="accept">Accept All Cookies</button>
+  <button id="onetrust-pc-btn-handler" data-track="settings">Cookie Settings</button>
+</div>
+<script>
+  document.getElementById("onetrust-accept-btn-handler").addEventListener("click", () =>
+    document.getElementById("onetrust-banner-sdk").remove());
+</script>
+</body></html>

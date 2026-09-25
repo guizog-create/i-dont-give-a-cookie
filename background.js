@@ -1,168 +1,241 @@
 // I Don't Give a Cookie - Background Service Worker
-// v2.0.0 - Coordinates content scripts, handles SPA navigation,
-// manages badge, and provides centralized state management.
+// Single writer for statistics, per-tab status and per-site activity for
+// the popup, badge, a click-loop guard, and migration from v2.1 storage.
 
 "use strict";
 
-// ═══════════════════════════════════════════════════════════════════════════
-// STATE
-// ═══════════════════════════════════════════════════════════════════════════
+importScripts("rules.js");
 
-const stats = {
-  totalDismissed: 0,
-  cssFallbackCount: 0,
-};
-
-// Track which tabs have had banners dismissed
-const tabState = new Map();
+const LOOP_WINDOW_MS = 60 * 1000;      // Look at clicks in the last minute…
+const LOOP_MAX_CLICKS = 6;             // …more than this on one site = a loop
+const LOOP_BACKOFF_MS = 10 * 60 * 1000;
+const MAX_TRACKED_SITES = 500;
+const MAX_ACTIVITY_ENTRIES = 20;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BADGE MANAGEMENT
+// SERIALIZED STORAGE ACCESS
 // ═══════════════════════════════════════════════════════════════════════════
+// The service worker can be woken by several content scripts at once.
+// Read-modify-write without a queue loses increments; every write below
+// goes through this chain.
 
-function updateBadge(tabId, dismissed) {
-  try {
-    if (dismissed) {
-      chrome.action.setBadgeText({ text: "✓", tabId });
-      chrome.action.setBadgeBackgroundColor({ color: "#4CAF50", tabId });
-      // Clear badge after 3 seconds
-      setTimeout(() => {
-        try {
-          chrome.action.setBadgeText({ text: "", tabId });
-        } catch (e) { /* tab may be closed */ }
-      }, 3000);
-    }
-  } catch (e) { /* ignore badge errors */ }
+let queue = Promise.resolve();
+
+function serialized(task) {
+  const run = queue.then(task);
+  queue = run.catch((e) => console.error("[IDGAC]", e));
+  return run;
 }
 
-function updateGlobalBadge() {
-  // Show total count on extension icon when no specific tab is active
-  try {
-    if (stats.totalDismissed > 0) {
-      chrome.action.setTitle({
-        title: `I Don't Give a Cookie - ${stats.totalDismissed} banners dismissed this session`,
-      });
+function emptyStats() {
+  return { total: 0, cssFallback: 0, sites: {} };
+}
+
+function updateStats(mutate) {
+  return serialized(async () => {
+    const { stats = emptyStats() } = await chrome.storage.local.get("stats");
+    mutate(stats);
+    const sites = Object.entries(stats.sites);
+    if (sites.length > MAX_TRACKED_SITES) {
+      sites.sort((a, b) => b[1].last - a[1].last);
+      stats.sites = Object.fromEntries(sites.slice(0, MAX_TRACKED_SITES));
     }
-  } catch (e) { /* ignore */ }
+    await chrome.storage.local.set({ stats });
+  });
+}
+
+// Per-tab status lives in storage.session: it survives service-worker
+// restarts (an in-memory Map does not) and is wiped when the browser closes.
+function updateTab(tabId, mutate) {
+  const key = `tab:${tabId}`;
+  return serialized(async () => {
+    const data = await chrome.storage.session.get(key);
+    const entry = data[key] || { dismissed: 0, cssFallback: false };
+    mutate(entry);
+    await chrome.storage.session.set({ [key]: entry });
+  });
+}
+
+// Recent actions per site (memory-only storage.session, cleared when the
+// browser closes). Shown in the popup and read by the crawler.
+function logActivity(site, entry) {
+  if (!site) return Promise.resolve();
+  const key = `activity:${site}`;
+  return serialized(async () => {
+    const data = await chrome.storage.session.get(key);
+    const list = (data[key] || []).concat({ t: Date.now(), ...entry }).slice(-MAX_ACTIVITY_ENTRIES);
+    await chrome.storage.session.set({ [key]: list });
+  });
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MESSAGE HANDLING (from content scripts)
+// LOOP GUARD
+// ═══════════════════════════════════════════════════════════════════════════
+// If a click makes the page navigate or reload and the banner comes back,
+// the content script would click forever. Rate-limit clicks per site.
+
+function requestClick(site) {
+  return serialized(async () => {
+    const { loopGuard = {} } = await chrome.storage.session.get("loopGuard");
+    const now = Date.now();
+    const entry = loopGuard[site] || { clicks: [], blockedUntil: 0 };
+    entry.clicks = entry.clicks.filter((t) => now - t < LOOP_WINDOW_MS);
+
+    let allowed = now >= entry.blockedUntil;
+    if (allowed && entry.clicks.length >= LOOP_MAX_CLICKS) {
+      entry.blockedUntil = now + LOOP_BACKOFF_MS;
+      allowed = false;
+    }
+    if (allowed) entry.clicks.push(now);
+
+    loopGuard[site] = entry;
+    await chrome.storage.session.set({ loopGuard });
+    return allowed;
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// BADGE
+// ═══════════════════════════════════════════════════════════════════════════
+
+function flashBadge(tabId) {
+  chrome.action.setBadgeText({ text: "✓", tabId }).catch(() => {});
+  chrome.action.setBadgeBackgroundColor({ color: "#4CAF50", tabId }).catch(() => {});
+  setTimeout(() => {
+    chrome.action.setBadgeText({ text: "", tabId }).catch(() => {}); // tab may be gone
+  }, 3000);
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// MESSAGES
 // ═══════════════════════════════════════════════════════════════════════════
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (!msg || typeof msg.action !== "string") return false;
   const tabId = sender.tab && sender.tab.id;
+  const site = typeof msg.site === "string" ? msg.site : "";
 
   switch (msg.action) {
-    case "bannerDismissed":
-      stats.totalDismissed++;
-      if (tabId) {
-        tabState.set(tabId, {
-          hostname: msg.hostname,
-          dismissed: true,
-          timestamp: Date.now(),
-        });
-        updateBadge(tabId, true);
+    case "pageStart":
+      // Top frame (re)loaded: reset what the popup shows for this tab
+      if (tabId != null) {
+        serialized(() => chrome.storage.session.remove(`tab:${tabId}`));
       }
-      updateGlobalBadge();
-      // Persist total count
-      chrome.storage.local.set({ totalDismissed: stats.totalDismissed });
-      sendResponse({ ok: true });
-      break;
+      return false;
+
+    case "bannerDismissed":
+      logActivity(site, { event: "dismissed", strategy: String(msg.strategy || "") });
+      updateStats((stats) => {
+        stats.total++;
+        const entry = stats.sites[site] || { count: 0, last: 0 };
+        entry.count++;
+        entry.last = Date.now();
+        if (site) stats.sites[site] = entry;
+      });
+      if (tabId != null) {
+        updateTab(tabId, (entry) => { entry.dismissed++; });
+        flashBadge(tabId);
+      }
+      return false;
 
     case "cssFallbackUsed":
-      stats.cssFallbackCount++;
-      if (tabId) {
-        const state = tabState.get(tabId) || {};
-        state.cssFallback = true;
-        tabState.set(tabId, state);
-      }
-      sendResponse({ ok: true });
-      break;
+      logActivity(site, { event: "cssFallback" });
+      updateStats((stats) => { stats.cssFallback++; });
+      if (tabId != null) updateTab(tabId, (entry) => { entry.cssFallback = true; });
+      return false;
 
-    case "getStats":
-      sendResponse({
-        totalDismissed: stats.totalDismissed,
-        cssFallbackCount: stats.cssFallbackCount,
-      });
-      break;
+    case "frameFallback": {
+      // A CMP iframe gave up; its element lives in the top frame
+      let origin = null;
+      try {
+        origin = new URL(sender.url).origin;
+      } catch (e) { /* no url */ }
+      if (tabId != null && origin && sender.frameId !== 0) {
+        chrome.tabs.sendMessage(tabId, { action: "hideFrame", origin }, { frameId: 0 })
+          .catch(() => {}); // top frame may have navigated away
+      }
+      return false;
+    }
+
+    case "requestClick":
+      requestClick(site)
+        .then((allowed) => {
+          logActivity(site, {
+            event: allowed ? "action" : "loopGuard",
+            strategy: String(msg.strategy || "").slice(0, 120),
+            label: String(msg.label || "").slice(0, 60),
+            frame: sender.frameId === 0 ? "top" : "iframe",
+          });
+          sendResponse({ allowed });
+        })
+        .catch(() => sendResponse({ allowed: true }));
+      return true; // async response
+
+    case "getTabStatus":
+      chrome.storage.session.get(`tab:${msg.tabId}`)
+        .then((data) => sendResponse(data[`tab:${msg.tabId}`] || { dismissed: 0, cssFallback: false }))
+        .catch(() => sendResponse(null));
+      return true;
 
     default:
-      sendResponse({ ok: false, error: "unknown action" });
-  }
-
-  return true; // Keep channel open for async
-});
-
-// ═══════════════════════════════════════════════════════════════════════════
-// TAB NAVIGATION DETECTION (for SPA support)
-// ═══════════════════════════════════════════════════════════════════════════
-
-// Detect when a tab navigates (covers both full page loads and SPA History API)
-chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
-  // Only act on URL changes (SPA navigation) or complete loads
-  if (changeInfo.url || changeInfo.status === "complete") {
-    // If this tab previously had a banner dismissed, reset for new page
-    if (tabState.has(tabId)) {
-      const state = tabState.get(tabId);
-      // Only reset if URL actually changed
-      if (changeInfo.url && changeInfo.url !== state.lastUrl) {
-        state.lastUrl = changeInfo.url;
-        state.dismissed = false;
-        state.cssFallback = false;
-        tabState.set(tabId, state);
-
-        // Tell content script to re-scan
-        try {
-          chrome.tabs.sendMessage(tabId, { action: "reScan" }, () => {
-            if (chrome.runtime.lastError) {
-              // Content script not ready yet, that's fine — it will scan on its own
-            }
-          });
-        } catch (e) { /* ignore */ }
-      }
-    }
+      return false;
   }
 });
 
-// Clean up state when tabs are closed
 chrome.tabs.onRemoved.addListener((tabId) => {
-  tabState.delete(tabId);
+  serialized(() => chrome.storage.session.remove(`tab:${tabId}`));
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// INSTALLATION & STARTUP
+// INSTALL / UPDATE
 // ═══════════════════════════════════════════════════════════════════════════
 
-chrome.runtime.onInstalled.addListener((details) => {
-  if (details.reason === "install") {
-    // Set default settings on first install
-    chrome.storage.sync.set({ enabled: true });
-    chrome.storage.local.set({
-      totalDismissed: 0,
-      blocklist: [],
-      debug: false,
-    });
-  } else if (details.reason === "update") {
-    // Migration logic for future versions
-    const previousVersion = details.previousVersion;
-    // Preserve existing settings on update
-  }
-});
+// v2.1 kept one "__IDGAC__<hostname>" key per host (iframe hosts included)
+// plus a racy "totalDismissed" counter. Fold them into the single stats object.
+async function migrateLegacyStorage() {
+  const all = await chrome.storage.local.get(null);
+  const legacyKeys = Object.keys(all).filter((k) => k.startsWith("__IDGAC__"));
+  if (!legacyKeys.length && all.totalDismissed === undefined) return;
 
-// Load persisted stats on startup
-chrome.runtime.onStartup.addListener(() => {
-  chrome.storage.local.get(["totalDismissed"], (data) => {
-    if (data && data.totalDismissed) {
-      stats.totalDismissed = data.totalDismissed;
+  await updateStats((stats) => {
+    let sum = 0;
+    for (const key of legacyKeys) {
+      const entry = all[key];
+      const count = (entry && entry.count) || 0;
+      if (!count) continue;
+      sum += count;
+      const host = key.slice("__IDGAC__".length).replace(/^www\./, "");
+      const existing = stats.sites[host] || { count: 0, last: 0 };
+      existing.count += count;
+      existing.last = Math.max(existing.last, (entry && entry.ts) || 0);
+      stats.sites[host] = existing;
     }
-    updateGlobalBadge();
+    stats.total += Math.max(sum, all.totalDismissed || 0);
   });
+  await chrome.storage.local.remove([...legacyKeys, "totalDismissed"]);
+}
+
+// rules/sites.json → validated → storage.local.siteRules, which content
+// scripts read with their other settings (no extra round-trip per page).
+async function loadSiteRules() {
+  try {
+    const response = await fetch(chrome.runtime.getURL("rules/sites.json"));
+    const { valid, errors } = self.IDGAC_validateRules(await response.json());
+    if (errors.length) console.warn("[IDGAC] Ignored invalid site rules:", errors);
+    await chrome.storage.local.set({ siteRules: valid });
+  } catch (e) {
+    console.error("[IDGAC] Could not load site rules:", e);
+  }
+}
+
+chrome.runtime.onInstalled.addListener(async (details) => {
+  if (details.reason === "install") {
+    await chrome.storage.sync.set({ enabled: true });
+    await chrome.storage.local.set({ blocklist: [], debug: false, stats: emptyStats() });
+  } else if (details.reason === "update") {
+    await migrateLegacyStorage();
+  }
+  await loadSiteRules();
 });
 
-// Also load on service worker wake
-chrome.storage.local.get(["totalDismissed"], (data) => {
-  if (data && data.totalDismissed) {
-    stats.totalDismissed = data.totalDismissed;
-  }
-});
+chrome.runtime.onStartup.addListener(loadSiteRules);
