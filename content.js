@@ -530,13 +530,8 @@
     "prove you're human", "human verification", "robot verification",
   ];
 
-  // Sites where only CMP-specific selectors are used (no heuristics).
-  // Kept as a belt-and-braces guard for sites that historically looped.
-  const CMP_ONLY_DOMAINS = [
-    "x.com", "twitter.com",
-    "nytimes.com",
-    "vimeo.com",
-  ];
+  // Per-site behaviour (cmp-only, off, curated accept/hide selectors) lives
+  // in rules/sites.json; the background validates it into storage.
 
   // ═══════════════════════════════════════════════════════════════════════════
   // TEXT MATCHING
@@ -624,14 +619,26 @@
     return !!p && (site === p || site.endsWith("." + p));
   }
 
-  const settings = { enabled: true, blocked: false };
+  const settings = { enabled: true, blocked: false, rule: null };
 
   function applyBlocklist(list) {
     settings.blocked = Array.isArray(list) && list.some((p) => hostMatches(SITE, p));
   }
 
+  function applySiteRules(list) {
+    const rule = (Array.isArray(list) ? list : []).find(
+      (r) => r && Array.isArray(r.domains) && r.domains.some((d) => hostMatches(SITE, d))) || null;
+    settings.rule = rule && {
+      mode: rule.mode || "default",
+      accept: validSelectors(rule.accept || []),
+      hide: validSelectors(rule.hide || []),
+      reason: rule.reason || "",
+    };
+  }
+
   function canRun() {
-    return settings.enabled && !settings.blocked && extensionAlive();
+    return settings.enabled && !settings.blocked && extensionAlive() &&
+      !(settings.rule && settings.rule.mode === "off");
   }
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -1063,12 +1070,43 @@
   // DETECTION PIPELINE
   // ═══════════════════════════════════════════════════════════════════════════
 
-  const cmpOnly = CMP_ONLY_DOMAINS.some((d) => hostMatches(SITE, d));
+  const isCmpOnly = () => !!(settings.rule && settings.rule.mode === "cmp-only");
+
+  // Curated per-site accept selectors: most specific, so tried first
+  function findRuleTarget() {
+    const selectors = settings.rule ? settings.rule.accept : [];
+    if (!selectors.length) return null;
+    const roots = collectRoots();
+    for (const selector of selectors) {
+      for (const el of queryAllDeep(roots, selector)) {
+        if (!isVisible(el) || isDisabled(el) || isToggle(el)) continue;
+        return { el, container: closestContainer(el), strategy: `site rule ${selector}` };
+      }
+    }
+    return null;
+  }
+
+  // Cosmetic hiding for purely informational banners (records no consent)
+  function applyHideRules() {
+    const existing = document.getElementById("idgac-site-hide");
+    const selectors = canRun() && settings.rule ? settings.rule.hide : [];
+    if (!selectors.length) {
+      if (existing) existing.remove();
+      return;
+    }
+    const style = existing || document.createElement("style");
+    style.id = "idgac-site-hide";
+    style.textContent = `${selectors.join(",\n")} { display: none !important; }`;
+    if (!existing) (document.head || document.documentElement).appendChild(style);
+  }
 
   // full=false: only the cheap document-level CMP selector check. Used for
   // mutations that add nothing cookie-related (tickers, carousels, ads).
   function findTarget(full = true) {
     if (isChallengePage()) return null;
+    const ruled = findRuleTarget();
+    if (ruled) return ruled;
+
     const api = findApiTarget();
     if (api) return api;
 
@@ -1077,7 +1115,7 @@
     const cmp = findCMPButton(roots);
     if (cmp) return cmp;
 
-    if (cmpOnly || !full) return null;
+    if (isCmpOnly() || !full) return null;
     if (!mentionsConsent(roots)) return null; // fast path for most pages
 
     for (const container of findContainers(roots)) {
@@ -1446,6 +1484,7 @@
       cssFallback: cssFallbackInjected,
       enabled: settings.enabled,
       blocked: settings.blocked,
+      rule: settings.rule && { mode: settings.rule.mode, reason: settings.rule.reason },
     };
   }
 
@@ -1478,7 +1517,9 @@
       if (area === "sync" && changes.enabled) settings.enabled = changes.enabled.newValue !== false;
       if (area === "local" && changes.blocklist) applyBlocklist(changes.blocklist.newValue);
       if (area === "local" && changes.debug) debugMode = !!changes.debug.newValue;
-      if (!changes.enabled && !changes.blocklist) return;
+      if (area === "local" && changes.siteRules) applySiteRules(changes.siteRules.newValue);
+      if (!changes.enabled && !changes.blocklist && !changes.siteRules) return;
+      applyHideRules();
 
       if (canRun()) {
         if (state.phase === "idle" || state.phase === "stopped") arm("settings changed");
@@ -1496,10 +1537,11 @@
   function loadSettings() {
     return Promise.all([
       chrome.storage.sync.get({ enabled: true }),
-      chrome.storage.local.get({ blocklist: [], debug: false }),
+      chrome.storage.local.get({ blocklist: [], debug: false, siteRules: [] }),
     ]).then(([sync, local]) => {
       settings.enabled = sync.enabled !== false;
       applyBlocklist(local.blocklist);
+      applySiteRules(local.siteRules);
       debugMode = !!local.debug;
     });
   }
@@ -1514,6 +1556,7 @@
     }
     if (IS_TOP) sendToBackground("pageStart");
     setupSPADetection();
+    applyHideRules();
     if (canRun()) arm("page load");
   }
 

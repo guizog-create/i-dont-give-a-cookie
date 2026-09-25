@@ -71,6 +71,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     showBlocked(blocked);
 
     if (blocked) return setStatus("blocked", "Blocked: extension disabled here");
+    const { siteRules = [] } = await chrome.storage.local.get("siteRules");
+    const rule = siteRules.find((r) => r.domains.some((d) => hostMatches(site, d)));
+    if (rule && rule.mode === "off") return setStatus("blocked", `Built-in rule: off (${rule.reason})`);
     if (!enableToggle.checked) return setStatus("idle", "Extension is turned off");
 
     const tab = await chrome.runtime.sendMessage({ action: "getTabStatus", tabId }).catch(() => null);

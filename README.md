@@ -97,6 +97,8 @@ npm run pack         # dist/i-dont-give-a-cookie-<version>.zip for the Chrome We
 npm run update-psl   # regenerate psl-rules.js after bumping the psl dev dependency
 ```
 
+Per-site fixes are data, not code: see [`rules/README.md`](rules/README.md) for the `rules/sites.json` format (`mode`, `accept`, `hide`, `reason`).
+
 Tests live in `tests/`: each fixture in `tests/fixtures/` is a small page reproducing one real-world banner pattern or a false-positive trap, and `tests/e2e.js` asserts exactly what got clicked. When you add a CMP or fix a site, add a fixture for it.
 
 ## License
