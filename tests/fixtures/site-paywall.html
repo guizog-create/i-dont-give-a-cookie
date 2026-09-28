@@ -1,0 +1,11 @@
+<!doctype html><html><head><meta charset="utf-8"><title>News with consent wall iframe</title></head><body>
+<script src="/harness.js"></script>
+<p>Article teaser.</p>
+<iframe id="wall" style="position:fixed;inset:10%;width:80%;height:80%;border:0;background:#fff;z-index:9999"></iframe>
+<script>
+  document.getElementById("wall").src = "http://localhost:" + location.port + "/paywall-frame.html";
+  window.addEventListener("message", (e) => {
+    if (e.data && e.data.idgacTest === "accept") document.getElementById("wall").remove();
+  });
+</script>
+</body></html>

@@ -1,0 +1,13 @@
+<!doctype html><html><head><meta charset="utf-8"><title>CMP frame, stuck parent</title></head><body style="margin:0">
+<script src="/harness.js"></script>
+<div class="message-container" style="padding:12px">
+  <p>We and our partners use cookies to store and/or access information on a device.</p>
+  <button title="Accept all" data-track="accept">Accept all</button>
+</div>
+<script>
+  // Accepting closes the message inside the frame, but (like some Sourcepoint
+  // "pur" walls) the parent page never removes the iframe itself.
+  document.querySelector("[data-track=accept]").addEventListener("click", () =>
+    document.querySelector(".message-container").remove());
+</script>
+</body></html>

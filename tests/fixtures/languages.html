@@ -1,0 +1,37 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Languages</title></head><body>
+<script src="/harness.js"></script>
+<!-- One banner per page, chosen by ?lang= ; texts follow real banners seen in the crawl -->
+<script>
+  const BANNERS = {
+    // check24.de
+    de: 'Mit dem Klick auf „geht klar” ermöglichen Sie uns, Ihnen über Cookies ein verbessertes Nutzungserlebnis zu bieten.' +
+        '<button data-track="reject">Nur notwendige Cookies</button><button data-track="accept">geht klar</button>',
+    // onet.pl
+    pl: 'Szanowna Użytkowniczko, Szanowny Użytkowniku, używamy plików cookie i podobnych technologii.' +
+        '<button data-track="reject">Ustawienia zaawansowane</button><button data-track="accept">Przejdź do serwisu</button>',
+    // seznam.cz / novinky.cz: no "cookie" word, only "souhlas" (consent)
+    cs: 'Abyste mohli pokračovat, potřebujeme znát váš souhlas se zobrazováním personalizované reklamy.' +
+        '<button data-track="reject">Nesouhlasím</button><button data-track="accept">Souhlasím</button>',
+    // delfi.ee
+    et: 'Kasutame küpsiseid, et parandada teie kogemust.' +
+        '<button data-track="reject">Keeldu</button><button data-track="accept">Nõustun kõigiga</button>',
+    lv: 'Mēs izmantojam sīkdatnes, lai uzlabotu jūsu pieredzi.' +
+        '<button data-track="reject">Noraidīt</button><button data-track="accept">Pieņemt visus</button>',
+    lt: 'Naudojame slapukus, kad pagerintume jūsų patirtį.' +
+        '<button data-track="reject">Atmesti</button><button data-track="accept">Priimti visus</button>',
+    hr: 'Koristimo kolačiće kako bismo poboljšali vaše iskustvo.' +
+        '<button data-track="reject">Odbij</button><button data-track="accept">Prihvati sve</button>',
+    sl: 'Uporabljamo piškotke za boljšo uporabniško izkušnjo.' +
+        '<button data-track="reject">Zavrni</button><button data-track="accept">Sprejmi vse</button>',
+    bg: 'Използваме бисквитки, за да подобрим вашето изживяване.' +
+        '<button data-track="reject">Откажи</button><button data-track="accept">Приеми всички</button>',
+    sk: 'Používame súbory cookie na zlepšenie vašej skúsenosti.' +
+        '<button data-track="reject">Odmietnuť</button><button data-track="accept">Prijať všetko</button>',
+  };
+  const d = document.createElement("div");
+  d.style.cssText = "position:fixed;bottom:0;left:0;right:0;min-height:80px;background:#fff;z-index:9999;padding:10px";
+  d.innerHTML = BANNERS[new URLSearchParams(location.search).get("lang")];
+  document.body.appendChild(d);
+  d.querySelector("[data-track=accept]").onclick = () => d.remove();
+</script>
+</body></html>
