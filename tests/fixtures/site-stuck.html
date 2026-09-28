@@ -1,0 +1,10 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Site whose CMP iframe lingers</title></head><body>
+<script src="/harness.js"></script>
+<p>Publisher page.</p>
+<div id="sp_wrapper" style="position:fixed;bottom:0;left:0;right:0;height:160px;z-index:9999">
+  <iframe id="cmp" style="width:100%;height:100%;border:0;background:#fff"></iframe>
+</div>
+<script>
+  document.getElementById("cmp").src = "http://localhost:" + location.port + "/cmp-frame-stuck.html";
+</script>
+</body></html>
