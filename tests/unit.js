@@ -59,5 +59,50 @@ if (bad.valid.length !== 1 || bad.errors.length !== 6) {
   console.log(`  \u2717 validator accepted ${bad.valid.length} rule(s) / reported ${bad.errors.length} error(s), expected 1 / 6`);
 }
 
+// Crawl classification, using real cases from the first nightly runs
+const { classify, isReviewed, loadReviewed } = require("../scripts/crawl.js");
+const page = (url, banner) => ({ ok: true, finalUrl: url, banner: { present: banner, items: [] } });
+const act = (strategy, label = "") => ({ event: "action", strategy, label });
+const crawlCases = [
+  // lidl.de: OneTrust API used, control detector saw nothing -> detector gap
+  ["lidl API, no control banner", page("https://www.lidl.de/", false), page("https://www.lidl.de/", false),
+    [act("CMP API onetrust")], "accepted-unconfirmed"],
+  // bbc.co.uk: Sourcepoint's own button inside its iframe
+  ["bbc CMP selector", page("https://www.bbc.co.uk/", false), page("https://www.bbc.co.uk/", false),
+    [act("CMP selector .sp_choice_type_11", "accept and continue")], "accepted-unconfirmed"],
+  // derstandard.at: consent wall redirects back within the same site
+  ["derstandard same-site redirect", page("https://www.derstandard.at/consent/tcf/", true),
+    page("https://www.derstandard.at/", false), [act("CMP selector .sp_choice_type_11", "einverstanden")], "accepted"],
+  // a heuristic click where nobody saw a banner stays suspicious
+  ["heuristic click, no banner", page("https://wp.pl/", false), page("https://wp.pl/", false),
+    [act("container", "akceptuję i przechodzę do serwisu")], "suspicious"],
+  // leaving the site after any action is suspicious
+  ["cross-site navigation", page("https://a.example/", true), page("https://shop.other.example/", false),
+    [act("CMP selector #x", "accept")], "suspicious"],
+  ["missed", page("https://x.example/", true), page("https://x.example/", true), [], "missed"],
+  ["no banner", page("https://x.example/", false), page("https://x.example/", false), [], "no-banner"],
+];
+for (const [name, control, withExt, activity, want] of crawlCases) {
+  checks++;
+  const got = classify(control, withExt, activity);
+  if (got !== want) {
+    failed++;
+    console.log(`  \u2717 crawl classify (${name}) = ${got}, expected ${want}`);
+  }
+}
+const reviewed = loadReviewed();
+const reviewedCases = [
+  ["wp.pl reviewed action", "https://www.wp.pl/", [act("container", "akceptuję i przechodzę do serwisu")], true],
+  ["wp.pl different action", "https://www.wp.pl/", [act("container", "ok")], false],
+  ["other site, same action", "https://onet.pl/", [act("container", "akceptuję i przechodzę do serwisu")], false],
+];
+for (const [name, url, activity, want] of reviewedCases) {
+  checks++;
+  if (isReviewed(url, activity, reviewed) !== want) {
+    failed++;
+    console.log(`  \u2717 crawl isReviewed (${name}) should be ${want}`);
+  }
+}
+
 console.log(`unit: ${checks - failed}/${checks} passed`);
 if (failed) process.exit(1);
