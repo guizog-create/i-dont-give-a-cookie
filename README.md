@@ -1,12 +1,12 @@
 # I Don't Give a Cookie
 
-A Chrome extension that automatically accepts cookie consent banners on virtually any website. It covers 27 languages and 40+ Consent Management Platforms, verifies each click, falls back to CSS, supports SPAs, and has per-site controls. It is also careful never to click anything that isn't a cookie banner.
+A Chrome extension that automatically accepts cookie consent banners on virtually any website. It covers 34 languages and 40+ Consent Management Platforms, verifies each click, falls back to CSS, supports SPAs, and has per-site controls. It is also careful never to click anything that isn't a cookie banner.
 
 ## Features
 
 - **Two-stage detection**: exact selectors for 40+ known CMPs first, then a heuristic that starts from text mentioning cookies/consent and walks up to the floating box (fixed, sticky or dialog) that contains it
 - **40+ CMP platforms**: OneTrust, Cookiebot, Didomi, Quantcast, TrustArc, Usercentrics, CookieYes, Osano, Complianz, Klaro, Iubenda, Termly, HubSpot, Sourcepoint, Consentmanager.net, Tarteaucitron, and many more
-- **27 languages**: English, French, German, Spanish, Italian, Portuguese, Dutch, Polish, Swedish, Danish, Norwegian, Finnish, Czech, Romanian, Hungarian, Greek, Turkish, Russian, Ukrainian, Japanese, Chinese, Korean, Arabic, Thai, Vietnamese, Indonesian, Hindi
+- **34 languages**: English, French, German, Spanish, Italian, Portuguese, Dutch, Polish, Swedish, Danish, Norwegian, Finnish, Czech, Slovak, Romanian, Hungarian, Greek, Turkish, Russian, Ukrainian, Bulgarian, Croatian, Slovenian, Estonian, Latvian, Lithuanian, Japanese, Chinese, Korean, Arabic, Thai, Vietnamese, Indonesian, Hindi
 - **Click verification**: one activation per attempt, then it checks that the banner actually went away (fade-out animations are allowed for). It retries up to 3 times
 - **CSS fallback**: if the CMP's button is broken, it hides the banner *and* its backdrop and restores scrolling
 - **SPA support**: re-scans after client-side navigation (Navigation API, `popstate`, `hashchange`)

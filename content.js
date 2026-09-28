@@ -42,6 +42,7 @@
     maxAncestorWalk: 12,
     maxTextAnchors: 40,
     spaRearmDelay: 1000,
+    frameCleanupDelayMs: 2500,    // after an in-iframe accept, then hide the frame if it lingers
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -382,6 +383,20 @@
     "terima semua",
     // Hindi
     "सभी स्वीकार करें",
+    // Slovak
+    "prijať všetko", "prijať všetky", "súhlasím so všetkými",
+    // Estonian
+    "nõustun kõigiga", "luba kõik", "aktsepteeri kõik", "nõustu kõigiga",
+    // Latvian
+    "pieņemt visus", "pieņemt visas", "atļaut visus", "piekrītu visiem",
+    // Lithuanian
+    "priimti visus", "priimti viską", "leisti visus", "sutinku su visais",
+    // Croatian / Serbian / Bosnian
+    "prihvati sve", "prihvaćam sve", "dozvoli sve",
+    // Slovenian
+    "sprejmi vse", "sprejmem vse", "dovoli vse",
+    // Bulgarian
+    "приеми всички", "приемане на всички", "приемам всички",
   ];
 
   // Matched as whole words anywhere in the button text ("Accept", "Yes, accept").
@@ -414,6 +429,13 @@
     "chấp nhận", "đồng ý",
     "terima", "setuju",
     "स्वीकार करें", "सहमत",
+    "prijať", "súhlasím",
+    "nõustun", "aktsepteeri",
+    "piekrītu", "pieņemt",
+    "sutinku", "priimti",
+    "prihvati", "prihvaćam", "slažem se",
+    "sprejmi", "sprejmem", "strinjam se",
+    "приемам", "приеми", "съгласен съм", "съгласна съм",
   ];
 
   // Too ambiguous to match inside longer text: only accepted when the
@@ -425,6 +447,9 @@
     "lukk", "sulje", "zavřít", "închide", "bezár", "κλείσιμο", "εντάξει",
     "tamam", "kapat", "хорошо", "закрыть", "закрити", "閉じる", "确定",
     "关闭", "확인", "닫기", "إغلاق", "ตกลง",
+    // Colloquial accept labels seen on real banners (crawl): check24.de,
+    // onet.pl. Exact-only, and only inside a box that talks about cookies.
+    "geht klar", "alles klar", "przejdź do serwisu", "przejdz do serwisu",
   ];
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -476,6 +501,13 @@
     // Russian / Ukrainian
     "настройки", "настроить", "подробнее", "отклонить",
     "управлять", "только необходимые", "відхилити", "налаштування",
+    // Czech / Slovak
+    "odmítnout", "nastavení", "nesouhlasím", "odmietnuť", "nastavenia", "nesúhlasím",
+    // Baltic
+    "keeldu", "keeldun", "seaded", "noraidīt", "iestatījumi", "atmesti", "nesutinku",
+    "nustatymai",
+    // South Slavic / Bulgarian
+    "odbij", "odbijam", "postavke", "zavrni", "nastavitve", "откажи", "отказвам",
     // CJK (matched as substrings, so the negated forms of "agree" matter)
     "拒否", "設定", "同意しない", "拒绝", "设置", "不同意", "不接受",
     "거부", "설정", "동의하지 않",
@@ -509,12 +541,16 @@
     "ملفات تعريف الارتباط", "كوكيز",
     "คุกกี้",
     "कुकी",
+    "küpsis", "sīkdatn", "slapuk", "kolačić", "kolacic", "piškot", "бисквитк",
   ];
 
   // Weak: "consent" also appears in account, Terms and marketing dialogs.
   const COOKIE_CONTEXT_WEAK = [
     "consent", "consentement", "einwilligung", "consentimiento", "consenso",
     "consentimento", "toestemming", "samtycke", "samtykke", "suostumus",
+    "souhlas", "súhlas", "zgoda", "zgody", "zgodę", "nõusolek", "piekrišan",
+    "sutikim", "privol", "hozzájárul", "consimțământ", "съгласие", "согласие",
+    "συγκατάθεσ",
   ];
 
   const COOKIE_CONTEXT_KEYWORDS = [...COOKIE_CONTEXT_STRONG, ...COOKIE_CONTEXT_WEAK];
@@ -935,24 +971,36 @@
   // STRATEGY 2: CONSENT CONTAINERS (known + text-anchored heuristics)
   // ═══════════════════════════════════════════════════════════════════════════
 
-  // Nearest ancestor that looks like a banner/dialog rather than page content.
-  function floatingAncestor(start) {
+  // Does this element look like a banner/dialog rather than page content?
+  function isFloatingBox(node) {
+    if (node.nodeType !== 1 || node === document.body || node === document.documentElement) return false;
+    try {
+      if (RE_HINT.test(classAndId(node))) return true;
+      const role = node.getAttribute("role");
+      if (role === "dialog" || role === "alertdialog" || node.getAttribute("aria-modal") === "true") return true;
+      if (node.localName === "dialog" && node.open) return true;
+      const style = getComputedStyle(node);
+      if (style.position === "fixed" || style.position === "sticky") return true;
+      if ((parseInt(style.zIndex, 10) || 0) > 100 && style.position !== "static") return true;
+    } catch (e) { /* skip */ }
+    return false;
+  }
+
+  // Banner-like ancestors, innermost first. The innermost match is often
+  // just the text paragraph (class "cookie-popup__text") with the buttons
+  // in a sibling, so callers try the enclosing ones too.
+  function floatingAncestors(start, max = 4) {
+    const found = [];
     let node = start;
-    for (let depth = 0; node && depth < CONFIG.maxAncestorWalk; depth++) {
-      if (node.nodeType === 1 && node !== document.body && node !== document.documentElement) {
-        try {
-          if (RE_HINT.test(classAndId(node))) return node;
-          const role = node.getAttribute("role");
-          if (role === "dialog" || role === "alertdialog" || node.getAttribute("aria-modal") === "true") return node;
-          if (node.localName === "dialog" && node.open) return node;
-          const style = getComputedStyle(node);
-          if (style.position === "fixed" || style.position === "sticky") return node;
-          if ((parseInt(style.zIndex, 10) || 0) > 100 && style.position !== "static") return node;
-        } catch (e) { /* skip */ }
-      }
+    for (let depth = 0; node && depth < CONFIG.maxAncestorWalk && found.length < max; depth++) {
+      if (isFloatingBox(node)) found.push(node);
       node = parentOf(node);
     }
-    return null;
+    return found;
+  }
+
+  function floatingAncestor(start) {
+    return floatingAncestors(start, 1)[0] || null;
   }
 
   function isPlausibleContainer(el) {
@@ -1010,9 +1058,13 @@
       });
       for (let t = walker.nextNode(); t && anchors < CONFIG.maxTextAnchors; t = walker.nextNode()) {
         anchors++;
-        add(floatingAncestor(t.parentElement));
+        for (const box of floatingAncestors(t.parentElement)) add(box);
       }
     }
+
+    // Inside a sub-frame (CMP or pay-or-accept wall iframes) nothing needs
+    // to float: the frame's page is the banner. Same consent checks apply.
+    if (!IS_TOP && document.body) add(document.body);
     return found;
   }
 
@@ -1427,6 +1479,10 @@
     state.attempts = 0;
     log("Banner dismissed");
     sendToBackground("bannerDismissed", { strategy: state.lastStrategy });
+    // Accepted inside a CMP iframe: the parent page normally removes the
+    // frame. Some (Sourcepoint "pur" walls) leave it covering the page, so
+    // ask the top frame to hide it if it's still there shortly.
+    if (!IS_TOP) sendToBackground("frameFallback", { delayMs: CONFIG.frameCleanupDelayMs });
     if (state.successes >= CONFIG.maxBannersPerPage) {
       stop("done");
     } else {
@@ -1560,7 +1616,13 @@
         return false;
       }
       if (msg.action === "hideFrame" && IS_TOP && typeof msg.origin === "string") {
-        sendResponse({ ok: hideFrameFromOrigin(msg.origin) });
+        const delay = Math.min(Math.max(Number(msg.delayMs) || 0, 0), 10000);
+        if (!delay) {
+          sendResponse({ ok: hideFrameFromOrigin(msg.origin) });
+        } else {
+          setTimeout(() => hideFrameFromOrigin(msg.origin), delay); // only if still showing
+          sendResponse({ ok: true, scheduled: true });
+        }
         return false;
       }
       if (msg.action === "getStatus" && IS_TOP) {
