@@ -207,6 +207,51 @@ const tests = [
     },
   },
   {
+    name: "gap: buttons outside the class-hinted text paragraph (Ryanair-style)",
+    async run({ page }) {
+      await page.goto(url("popup-paragraph.html"));
+      const ok = await waitFor(async () => (await clicks(page)).accept);
+      expect(ok, "'Yes, I agree' next to a 'cookie-popup__description' paragraph was not clicked");
+      expect(!(await clicks(page)).settings, "clicked 'Manage settings'");
+    },
+  },
+  {
+    name: "gap: accept labels and cookie words in 10 more languages",
+    async run({ page }) {
+      const failures = [];
+      const langs = ["de", "pl", "cs", "et", "lv", "lt", "hr", "sl", "bg", "sk"];
+      for (let i = 0; i < langs.length; i++) {
+        await page.goto(url(`languages.html?lang=${langs[i]}`, `127.0.0.${200 + i}`));
+        const ok = await waitFor(async () => (await clicks(page)).accept, 4000);
+        const c = await clicks(page);
+        if (!ok) failures.push(`${langs[i]}: not accepted`);
+        if (c.reject) failures.push(`${langs[i]}: clicked the reject/settings button`);
+      }
+      expect(!failures.length, failures.join("; "));
+    },
+  },
+  {
+    name: "gap: consent wall inside a cross-origin iframe (Piano-style)",
+    async run({ page }) {
+      await page.goto(url("site-paywall.html"));
+      const ok = await waitFor(async () => (await clicks(page))["frame:accept"], 6000);
+      expect(ok, "'Aceptar y continuar' inside the wall iframe was not clicked");
+      expect(!(await clicks(page))["frame:subscribe"], "clicked 'Suscríbete'");
+    },
+  },
+  {
+    name: "gap: CMP iframe accepted but left on screen gets hidden (Sourcepoint pur)",
+    async run({ page }) {
+      await page.goto(url("site-stuck.html"));
+      const accepted = await waitFor(async () => (await clicks(page))["frame:accept"], 6000);
+      expect(accepted, "accept inside the frame was not clicked");
+      const hidden = await waitFor(() => page.evaluate(
+        () => getComputedStyle(document.getElementById("sp_wrapper")).display === "none"), 8000);
+      expect(hidden, "empty CMP iframe still covers the page after acceptance");
+      expect((await clicks(page))["frame:accept"] === 1, "accept clicked more than once");
+    },
+  },
+  {
     name: "broken CMP: CSS fallback removes the blocking overlay too, bounded clicks",
     async run({ page }) {
       await page.goto(url("cmpbox-dead.html"));

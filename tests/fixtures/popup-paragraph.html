@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Airline</title></head><body>
+<script src="/harness.js"></script>
+<p>Book flights.</p>
+<!-- Ryanair-style: only the overlay is fixed; the class hint sits on the text
+     paragraph, and the buttons are in a sibling of it -->
+<div class="overlay-wrapper" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999">
+  <div class="box" style="background:#fff;width:600px;margin:15% auto;padding:16px">
+    <h3>We value your privacy</h3>
+    <p class="cookie-popup__description">By clicking “Yes, I agree”, you agree to us using cookies to improve your browsing experience.</p>
+    <div class="actions">
+      <button data-track="settings">Manage settings</button>
+      <button data-track="accept">Yes, I agree</button>
+    </div>
+  </div>
+</div>
+<script>document.querySelector("[data-track=accept]").onclick = () => document.querySelector(".overlay-wrapper").remove();</script>
+</body></html>

@@ -145,13 +145,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return false;
 
     case "frameFallback": {
-      // A CMP iframe gave up; its element lives in the top frame
+      // A CMP iframe gave up, or accepted but may be left on screen; the
+      // iframe element lives in the top frame
       let origin = null;
       try {
         origin = new URL(sender.url).origin;
       } catch (e) { /* no url */ }
       if (tabId != null && origin && sender.frameId !== 0) {
-        chrome.tabs.sendMessage(tabId, { action: "hideFrame", origin }, { frameId: 0 })
+        const delayMs = Math.min(Math.max(Number(msg.delayMs) || 0, 0), 10000);
+        chrome.tabs.sendMessage(tabId, { action: "hideFrame", origin, delayMs }, { frameId: 0 })
           .catch(() => {}); // top frame may have navigated away
       }
       return false;
