@@ -1,0 +1,11 @@
+{
+  "about": "Crawl actions a person has checked and found correct. The nightly crawl only fails on suspicious actions NOT listed here. An entry matches one site (registrable domain) and one exact action; a different action on the same site is treated as new. Copy the action text from the report's 'acted:' column (without the trailing '(top)' / '(iframe)').",
+  "reviewed": [
+    {
+      "site": "wp.pl",
+      "action": "container \"akceptuję i przechodzę do serwisu\"",
+      "reason": "wp.pl's RODO consent board ('I accept and continue to the site'); it's an in-flow full-page screen, so the control detector misses it",
+      "date": "2026-09-28"
+    }
+  ]
+}
