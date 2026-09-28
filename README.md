@@ -105,6 +105,8 @@ npm run update-psl   # regenerate psl-rules.js after bumping the psl dev depende
 
 Per-site fixes are data, not code: see [`rules/README.md`](rules/README.md) for the `rules/sites.json` format (`mode`, `accept`, `hide`, `reason`).
 
+The nightly **Real-site crawl** workflow fails only on a *new* suspicious action. When one is reported, check its screenshots in the `crawl-report` artifact; if the click was correct, add the site and action to `tests/crawl-reviewed.json` (with a reason) so it stops failing. If it was wrong, fix the extension.
+
 Tests live in `tests/`: each fixture in `tests/fixtures/` is a small page reproducing one real-world banner pattern or a false-positive trap, and `tests/e2e.js` asserts exactly what got clicked. When you add a CMP or fix a site, add a fixture for it.
 
 ## License

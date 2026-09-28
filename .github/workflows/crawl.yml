@@ -2,8 +2,11 @@ name: Real-site crawl
 
 # Nightly check against real websites. GitHub-hosted runners are in the US,
 # where many sites don't show consent banners at all, so treat these results
-# as a smoke test (mostly: "suspicious" = we clicked something we shouldn't
-# have). For coverage numbers run `npm run crawl` from an EU network.
+# as a smoke test. For coverage numbers run `npm run crawl` from an EU network.
+#
+# The run fails (and GitHub emails you) only on a NEW suspicious action: one
+# not already checked by a person and listed in tests/crawl-reviewed.json.
+# Missed banners and load errors are reported in the job summary, not failed on.
 
 on:
   schedule:
