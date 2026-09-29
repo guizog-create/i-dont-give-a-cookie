@@ -4,13 +4,14 @@
 
 "use strict";
 
-importScripts("rules.js");
+importScripts("rules.js", "cmp-api.js");
 
 const LOOP_WINDOW_MS = 60 * 1000;      // Look at clicks in the last minute…
 const LOOP_MAX_CLICKS = 6;             // …more than this on one site = a loop
 const LOOP_BACKOFF_MS = 10 * 60 * 1000;
 const MAX_TRACKED_SITES = 500;
 const MAX_ACTIVITY_ENTRIES = 20;
+const MAX_ACTIVITY_SITES = 200;        // session log keeps the most recent sites only
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SERIALIZED STORAGE ACCESS
@@ -31,10 +32,49 @@ function emptyStats() {
   return { total: 0, cssFallback: 0, sites: {} };
 }
 
+// Privacy: persistent stats never store readable site names (that would be a
+// browsing-history list on disk). Sites are keyed by a salted hash that only
+// serves to count distinct sites; the salt never leaves this profile.
+const HASHED_KEY = /^[0-9a-f]{16}$/;
+let saltPromise = null;
+
+function statsSalt() {
+  if (!saltPromise) {
+    saltPromise = chrome.storage.local.get("statsSalt").then(async ({ statsSalt: salt }) => {
+      if (salt) return salt;
+      const bytes = crypto.getRandomValues(new Uint8Array(16));
+      const fresh = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+      await chrome.storage.local.set({ statsSalt: fresh });
+      return fresh;
+    });
+  }
+  return saltPromise;
+}
+
+async function siteKey(site) {
+  const data = new TextEncoder().encode(`${await statsSalt()}|${site}`);
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", data));
+  return [...digest.slice(0, 8)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// Replace any readable site names (stored by v2.2-v2.5) with hashed keys
+async function hashPlainSiteKeys(stats) {
+  for (const [key, entry] of Object.entries(stats.sites)) {
+    if (HASHED_KEY.test(key)) continue;
+    const hashed = await siteKey(key);
+    const existing = stats.sites[hashed] || { count: 0, last: 0 };
+    existing.count += entry.count || 0;
+    existing.last = Math.max(existing.last, entry.last || 0);
+    stats.sites[hashed] = existing;
+    delete stats.sites[key];
+  }
+}
+
 function updateStats(mutate) {
   return serialized(async () => {
     const { stats = emptyStats() } = await chrome.storage.local.get("stats");
-    mutate(stats);
+    await mutate(stats);
+    await hashPlainSiteKeys(stats);
     const sites = Object.entries(stats.sites);
     if (sites.length > MAX_TRACKED_SITES) {
       sites.sort((a, b) => b[1].last - a[1].last);
@@ -62,9 +102,14 @@ function logActivity(site, entry) {
   if (!site) return Promise.resolve();
   const key = `activity:${site}`;
   return serialized(async () => {
-    const data = await chrome.storage.session.get(key);
+    const data = await chrome.storage.session.get([key, "activityIndex"]);
     const list = (data[key] || []).concat({ t: Date.now(), ...entry }).slice(-MAX_ACTIVITY_ENTRIES);
-    await chrome.storage.session.set({ [key]: list });
+    // Bounded: storage.session has a 10 MB quota and long browsing sessions
+    // would otherwise fill it
+    const index = (data.activityIndex || []).filter((s) => s !== site).concat(site);
+    const evicted = index.splice(0, Math.max(0, index.length - MAX_ACTIVITY_SITES));
+    if (evicted.length) await chrome.storage.session.remove(evicted.map((s) => `activity:${s}`));
+    await chrome.storage.session.set({ [key]: list, activityIndex: index });
   });
 }
 
@@ -89,6 +134,12 @@ function requestClick(site) {
     if (allowed) entry.clicks.push(now);
 
     loopGuard[site] = entry;
+    // Drop sites with nothing left to remember, so the table stays small
+    for (const [other, e] of Object.entries(loopGuard)) {
+      if (other !== site && e.blockedUntil <= now && !e.clicks.some((t) => now - t < LOOP_WINDOW_MS)) {
+        delete loopGuard[other];
+      }
+    }
     await chrome.storage.session.set({ loopGuard });
     return allowed;
   });
@@ -125,12 +176,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
     case "bannerDismissed":
       logActivity(site, { event: "dismissed", strategy: String(msg.strategy || "") });
-      updateStats((stats) => {
+      updateStats(async (stats) => {
         stats.total++;
-        const entry = stats.sites[site] || { count: 0, last: 0 };
+        if (!site) return;
+        const key = await siteKey(site);
+        const entry = stats.sites[key] || { count: 0, last: 0 };
         entry.count++;
         entry.last = Date.now();
-        if (site) stats.sites[site] = entry;
+        stats.sites[key] = entry;
       });
       if (tabId != null) {
         updateTab(tabId, (entry) => { entry.dismissed++; });
@@ -151,12 +204,35 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         origin = new URL(sender.url).origin;
       } catch (e) { /* no url */ }
-      if (tabId != null && origin && sender.frameId !== 0) {
+      // Opaque-origin frames (about:blank, data:) report "null": they could
+      // otherwise ask the top frame to hide every other "null" frame
+      if (tabId != null && origin && origin !== "null" && sender.frameId !== 0) {
         const delayMs = Math.min(Math.max(Number(msg.delayMs) || 0, 0), 10000);
         chrome.tabs.sendMessage(tabId, { action: "hideFrame", origin, delayMs }, { frameId: 0 })
           .catch(() => {}); // top frame may have navigated away
       }
       return false;
+    }
+
+    case "callCmpApi": {
+      // Runs the CMP's own "accept all" in the page world of the asking
+      // frame, only now. content.js has already checked that the banner is
+      // visible and the site allowed; nothing stays resident in the page.
+      const cmp = typeof msg.cmp === "string" ? msg.cmp : "";
+      if (tabId == null || !self.IDGAC_CMP_API_IDS.includes(cmp)) return false;
+      chrome.scripting.executeScript({
+        // Pin to the exact document that asked: if the frame navigated in
+        // the meantime (maybe to a blocked site), the call goes nowhere
+        target: sender.documentId
+          ? { tabId, documentIds: [sender.documentId] }
+          : { tabId, frameIds: [sender.frameId || 0] },
+        world: "MAIN",
+        func: self.IDGAC_cmpAcceptAll,
+        args: [cmp],
+      })
+        .then((results) => sendResponse({ ok: !!(results && results[0] && results[0].result) }))
+        .catch(() => sendResponse({ ok: false }));
+      return true; // async response
     }
 
     case "requestClick":
@@ -236,6 +312,7 @@ chrome.runtime.onInstalled.addListener(async (details) => {
     await chrome.storage.local.set({ blocklist: [], debug: false, stats: emptyStats() });
   } else if (details.reason === "update") {
     await migrateLegacyStorage();
+    await updateStats(() => {}); // hashes readable site names from v2.2-v2.5
   }
   await loadSiteRules();
 });

@@ -7,6 +7,8 @@
 //   npm run crawl -- --sites my-list.txt --out /tmp/report
 //   npm run crawl -- --fail-on-suspicious       exit 1 on a suspicious action
 //                                               not listed in tests/crawl-reviewed.json
+//   npm run crawl -- --annotate                 GitHub Actions annotations for
+//                                               findings (never fails the run)
 //
 // Results depend on where you run it: many sites only show consent banners
 // to EU visitors (by IP), so run it from an EU network for meaningful data.
@@ -49,6 +51,7 @@ function parseArgs(argv) {
     concurrency: 4,
     wait: 10000,
     failOnSuspicious: false,
+    annotate: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -59,6 +62,7 @@ function parseArgs(argv) {
     else if (a === "--concurrency") opts.concurrency = Math.max(1, Number(next()));
     else if (a === "--wait") opts.wait = Number(next());
     else if (a === "--fail-on-suspicious") opts.failOnSuspicious = true;
+    else if (a === "--annotate") opts.annotate = true;
     else throw new Error(`Unknown argument: ${a}`);
   }
   return opts;
@@ -107,10 +111,11 @@ function detectBanner() {
     } catch (e) { /* no src */ }
     return `${where} ${f.id} ${f.name} ${f.title}`;
   };
-  // Text outside links: a menu with a "Manage cookies" link isn't a banner
+  // Text outside links and buttons: a menu with a "Manage cookies" link or
+  // button isn't a banner; a banner's own sentence sits outside its buttons
   const ownText = (el) => {
     let text = el.innerText || "";
-    for (const a of el.querySelectorAll("a")) {
+    for (const a of el.querySelectorAll("a, button, [role='button']")) {
       const t = a.innerText;
       if (t) text = text.split(t).join(" ");
     }
@@ -139,6 +144,20 @@ function detectBanner() {
   return { present: found.length > 0, items: found };
 }
 
+// Headless Chromium announces itself as "HeadlessChrome", which bot
+// protection (Akamai, Cloudflare) often blocks outright. Present the same
+// version as a regular Chrome so the crawl sees what users see.
+let userAgent = null;
+async function regularUserAgent() {
+  if (!userAgent) {
+    const probe = await chromium.launch({ channel: "chromium", headless: true });
+    const version = probe.version();
+    await probe.close();
+    userAgent = `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${version} Safari/537.36`;
+  }
+  return userAgent;
+}
+
 async function launch(withExtension) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "idgac-crawl-"));
   const args = withExtension ? [`--disable-extensions-except=${ROOT}`, `--load-extension=${ROOT}`] : [];
@@ -148,6 +167,7 @@ async function launch(withExtension) {
     args,
     viewport: { width: 1280, height: 800 },
     locale: "en-GB",
+    userAgent: await regularUserAgent(),
     timezoneId: "Europe/Amsterdam",
   });
   const worker = withExtension
@@ -164,8 +184,8 @@ async function visit(context, url, opts, shotPath) {
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
     await sleep(opts.wait);
+    result.banner = await evaluateAfterNavigation(page, detectBanner);
     result.finalUrl = page.url();
-    result.banner = await page.evaluate(detectBanner);
     await page.screenshot({ path: shotPath, type: "jpeg", quality: 50 }).catch(() => {});
     result.ok = true;
   } catch (e) {
@@ -175,6 +195,20 @@ async function visit(context, url, opts, shotPath) {
     await page.close().catch(() => {});
   }
   return result;
+}
+
+// Consent walls often reload the page after accepting; wait for the new
+// document instead of reporting "Execution context was destroyed"
+async function evaluateAfterNavigation(page, fn) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await page.evaluate(fn);
+    } catch (e) {
+      if (attempt >= 2 || !/context was destroyed|navigat/i.test(e.message)) throw e;
+      await page.waitForLoadState("domcontentloaded", { timeout: 15000 }).catch(() => {});
+      await sleep(2000);
+    }
+  }
 }
 
 async function activityFor(worker, hosts) {
@@ -332,7 +366,20 @@ async function main() {
 
   const { newSuspicious, md } = writeReports(opts.out, rows, startedAt);
   console.log(`\n${md}\nReport: ${path.join(opts.out, "report.html")}`);
+  if (opts.annotate) annotate(rows);
   if (opts.failOnSuspicious && newSuspicious) process.exit(1);
+}
+
+// GitHub Actions annotations: visible on the run page, never fail it
+function annotate(rows) {
+  const clean = (s) => String(s).replace(/[\r\n%]/g, " ").slice(0, 300);
+  for (const r of rows) {
+    if (r.outcome === "suspicious" && !r.reviewed) {
+      console.log(`::warning title=Suspicious action: ${clean(r.url)}::${clean(r.detail)}`);
+    } else if (r.outcome === "missed") {
+      console.log(`::notice title=Banner missed: ${clean(r.url)}::${clean(r.detail)}`);
+    }
+  }
 }
 
 module.exports = { classify, isReviewed, loadReviewed, actionSignature, siteOf };

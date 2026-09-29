@@ -1,12 +1,12 @@
 # I Don't Give a Cookie
 
-A Chrome extension that automatically accepts cookie consent banners on virtually any website. It covers 34 languages and 40+ Consent Management Platforms, verifies each click, falls back to CSS, supports SPAs, and has per-site controls. It is also careful never to click anything that isn't a cookie banner.
+A Chrome extension that automatically accepts cookie consent banners on virtually any website. It covers 47 languages and 40+ Consent Management Platforms, verifies each click, falls back to CSS, supports SPAs, and has per-site controls. It is also careful never to click anything that isn't a cookie banner.
 
 ## Features
 
 - **Two-stage detection**: exact selectors for 40+ known CMPs first, then a heuristic that starts from text mentioning cookies/consent and walks up to the floating box (fixed, sticky or dialog) that contains it
 - **40+ CMP platforms**: OneTrust, Cookiebot, Didomi, Quantcast, TrustArc, Usercentrics, CookieYes, Osano, Complianz, Klaro, Iubenda, Termly, HubSpot, Sourcepoint, Consentmanager.net, Tarteaucitron, and many more
-- **34 languages**: English, French, German, Spanish, Italian, Portuguese, Dutch, Polish, Swedish, Danish, Norwegian, Finnish, Czech, Slovak, Romanian, Hungarian, Greek, Turkish, Russian, Ukrainian, Bulgarian, Croatian, Slovenian, Estonian, Latvian, Lithuanian, Japanese, Chinese, Korean, Arabic, Thai, Vietnamese, Indonesian, Hindi
+- **47 languages**: English, French, German, Spanish, Catalan, Galician, Basque, Italian, Portuguese, Dutch, Polish, Swedish, Danish, Norwegian, Icelandic, Finnish, Czech, Slovak, Romanian, Hungarian, Greek, Turkish, Russian, Ukrainian, Bulgarian, Serbian, Croatian, Slovenian, Macedonian, Albanian, Estonian, Latvian, Lithuanian, Irish, Maltese, Hebrew, Arabic, Persian, Japanese, Chinese, Korean, Thai, Vietnamese, Indonesian, Malay, Filipino, Hindi. Labels are matched as whole words (substrings only for scripts without spaces or with attached prefixes), after removing soft hyphens and zero-width characters and normalizing full-width text
 - **Click verification**: one activation per attempt, then it checks that the banner actually went away (fade-out animations are allowed for). It retries up to 3 times
 - **CSS fallback**: if the CMP's button is broken, it hides the banner *and* its backdrop and restores scrolling
 - **SPA support**: re-scans after client-side navigation (Navigation API, `popstate`, `hashchange`)
@@ -14,10 +14,11 @@ A Chrome extension that automatically accepts cookie consent banners on virtuall
 - **Loop guard**: if a site reloads and shows the banner again, it stops after 6 clicks per minute and backs off for 10 minutes
 - **Per-site controls**: block/allow from the popup. The page reacts immediately and the setting also covers CMP iframes on that site
 - **Shadow DOM**: open shadow roots, plus closed ones on custom elements via `chrome.dom`
-- **Safety guards**: never answers non-cookie dialogs ("Delete account?", sign-up or Terms dialogs, even ones that say "consent", feedback polls), never answers age gates, never touches boxes with form fields, and never clicks "reject/settings/subscribe/sign in", real navigation links, checkboxes, disabled buttons or CAPTCHA widgets
-- **CMP JavaScript APIs**: for OneTrust, Cookiebot, Didomi, Usercentrics, Klaro, consentmanager, Cookie-Script, tarteaucitron and CookieConsent it calls the platform's own "accept all" (only while its banner is visible), then verifies, and falls back to clicking
+- **Safety guards**: never answers non-cookie dialogs ("Delete account?", sign-up or Terms dialogs, even ones that say "consent", feedback polls), never answers age gates, never confirms US "Do Not Sell / privacy choices" dialogs, never touches boxes with form fields or small ad frames, and never clicks "reject/settings/subscribe/sign in", real navigation links, checkboxes, disabled buttons or CAPTCHA widgets
+- **Layouts**: fixed/sticky bars, modals, `<dialog>` and popover (top layer), shadow DOM, cross-origin and `about:blank`/`srcdoc` iframes, icon-only buttons (by accessible name), consent forms, and banners that appear late (it keeps a cheap watch for 10 minutes)
+- **CMP JavaScript APIs**: for OneTrust, Cookiebot, Didomi, Usercentrics, Klaro, consentmanager, Cookie-Script, tarteaucitron and CookieConsent it calls the platform's own "accept all" (only while its banner is visible), then verifies, and falls back to clicking. The call is injected on demand by the background; nothing stays in the page that a site could probe
 - **Site rules as data**: per-site fixes in `rules/sites.json` (see [rules/README.md](rules/README.md))
-- **Real-site crawler**: `npm run crawl` compares ~230 European sites with and without the extension and flags anything suspicious
+- **Real-site crawler**: `npm run crawl` compares ~230 European sites with and without the extension and flags anything suspicious (runs nightly as a report; it never fails on its own)
 - **Debug mode**: logs every decision to the page console with the `[IDGAC]` prefix
 - **No runtime dependencies**: plain JavaScript, no build step
 
@@ -76,7 +77,9 @@ Keyword matching respects word boundaries for space-separated scripts, so "OK" d
 This extension:
 - Runs entirely locally in your browser
 - Makes zero network requests
-- Stores only a dismissal count per site, the blocklist and your settings
+- Keeps no list of the sites you visit: dismissal counts are stored per salted hash of the site (enough to count distinct sites, not to read them back); the short activity log the popup uses lives in memory and is cleared when the browser closes
+- Leaves nothing in pages it doesn't act on, and pages can't probe for it
+- Stores your blocklist and settings
 - Does not collect, transmit, or share any data
 - Has no analytics, telemetry, or tracking
 
@@ -86,7 +89,7 @@ This extension:
 |-----------|-----|
 | `storage` | Settings, blocklist, per-site dismissal counts |
 | `activeTab` | Lets the popup read the current tab's address when you open it |
-| Content script on `<all_urls>` | Banners can appear on any site |
+| `scripting` + host access to all sites | Banners can appear on any site; `scripting` runs a consent platform's own "accept all" in the page, only at the moment a visible banner is being accepted |
 
 ## Development
 
@@ -105,7 +108,7 @@ npm run update-psl   # regenerate psl-rules.js after bumping the psl dev depende
 
 Per-site fixes are data, not code: see [`rules/README.md`](rules/README.md) for the `rules/sites.json` format (`mode`, `accept`, `hide`, `reason`).
 
-The nightly **Real-site crawl** workflow fails only on a *new* suspicious action. When one is reported, check its screenshots in the `crawl-report` artifact; if the click was correct, add the site and action to `tests/crawl-reviewed.json` (with a reason) so it stops failing. If it was wrong, fix the extension.
+The nightly **Real-site crawl** workflow is a report and never fails on its own (the live web changes daily). Suspicious actions and missed banners appear as annotations on the run and in its summary; screenshots are in the `crawl-report` artifact. If a flagged click was correct, add it to `tests/crawl-reviewed.json` with a reason; if it was wrong, fix the extension. To use the crawl as a gate before a release, start it manually with "fail on suspicious" ticked.
 
 Tests live in `tests/`: each fixture in `tests/fixtures/` is a small page reproducing one real-world banner pattern or a false-positive trap, and `tests/e2e.js` asserts exactly what got clicked. When you add a CMP or fix a site, add a fixture for it.
 
