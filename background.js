@@ -204,7 +204,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       try {
         origin = new URL(sender.url).origin;
       } catch (e) { /* no url */ }
-      if (tabId != null && origin && sender.frameId !== 0) {
+      // Opaque-origin frames (about:blank, data:) report "null": they could
+      // otherwise ask the top frame to hide every other "null" frame
+      if (tabId != null && origin && origin !== "null" && sender.frameId !== 0) {
         const delayMs = Math.min(Math.max(Number(msg.delayMs) || 0, 0), 10000);
         chrome.tabs.sendMessage(tabId, { action: "hideFrame", origin, delayMs }, { frameId: 0 })
           .catch(() => {}); // top frame may have navigated away
@@ -219,7 +221,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       const cmp = typeof msg.cmp === "string" ? msg.cmp : "";
       if (tabId == null || !self.IDGAC_CMP_API_IDS.includes(cmp)) return false;
       chrome.scripting.executeScript({
-        target: { tabId, frameIds: [sender.frameId || 0] },
+        // Pin to the exact document that asked: if the frame navigated in
+        // the meantime (maybe to a blocked site), the call goes nowhere
+        target: sender.documentId
+          ? { tabId, documentIds: [sender.documentId] }
+          : { tabId, frameIds: [sender.frameId || 0] },
         world: "MAIN",
         func: self.IDGAC_cmpAcceptAll,
         args: [cmp],
