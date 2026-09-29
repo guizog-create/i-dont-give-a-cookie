@@ -1,12 +1,17 @@
 name: Real-site crawl
 
-# Nightly check against real websites. GitHub-hosted runners are in the US,
-# where many sites don't show consent banners at all, so treat these results
-# as a smoke test. For coverage numbers run `npm run crawl` from an EU network.
+# Nightly report on how the extension does on real websites. It is a REPORT,
+# not a test: the live web changes every day, so the scheduled run never
+# fails (and so never sends failure emails). Findings appear as annotations
+# on the run and in its job summary; screenshots are in the crawl-report
+# artifact.
 #
-# The run fails (and GitHub emails you) only on a NEW suspicious action: one
-# not already checked by a person and listed in tests/crawl-reviewed.json.
-# Missed banners and load errors are reported in the job summary, not failed on.
+# GitHub-hosted runners are in the US, where many sites show no consent
+# banner at all. For coverage numbers run `npm run crawl` from an EU network.
+#
+# To use the crawl as a gate (e.g. before a release), start it manually with
+# "fail on suspicious" ticked: it then fails on any suspicious action not
+# listed in tests/crawl-reviewed.json.
 
 on:
   schedule:
@@ -16,6 +21,10 @@ on:
       limit:
         description: "Max number of sites (empty = all)"
         required: false
+      fail_on_suspicious:
+        description: "Fail the run on a new suspicious action"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -25,8 +34,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -35,8 +44,9 @@ jobs:
       - name: Crawl
         env:
           LIMIT: ${{ github.event.inputs.limit }}
-        run: npm run crawl -- --fail-on-suspicious ${LIMIT:+--limit "$LIMIT"}
-      - uses: actions/upload-artifact@v4
+          FAIL: ${{ github.event.inputs.fail_on_suspicious == 'true' && '--fail-on-suspicious' || '' }}
+        run: npm run crawl -- --annotate $FAIL ${LIMIT:+--limit "$LIMIT"}
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: crawl-report
