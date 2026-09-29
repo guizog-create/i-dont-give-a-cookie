@@ -62,6 +62,50 @@
       const d = bar('Cookieを使用しています。<button data-track="accept">ＡＣＣＥＰＴ ＡＬＬ</button>');
       d.querySelector("[data-track=accept]").onclick = () => d.remove();
     },
+    // <div> "buttons" with script-attached listeners, inside a wrapper div
+    // whose own text also matches (it must not be clicked: the listener
+    // is on the inner element)
+    divbuttons() {
+      const d = bar('PRIMA I COOKIE 🍪 Per offrire una migliore esperienza utilizziamo i cookie. ' +
+        '<div class="cc-actions"><div class="cc-btn cc-btn--secondary" data-track="reject">Rifiuta</div>' +
+        '<div class="cc-btn cc-btn--primary" data-track="accept">Accetta tutti</div></div>');
+      d.querySelector("[data-track=accept]").addEventListener("click", () => d.remove());
+    },
+    // Plain <span> with only a pointer cursor to show it's clickable
+    pointerspan() {
+      const d = bar(BANNER + '<span style="cursor:pointer" data-track="reject">No thanks</span> ' +
+        '<span style="cursor:pointer;background:#07f;color:#fff;padding:4px" data-track="accept">Allow all</span>');
+      d.querySelector("[data-track=accept]").addEventListener("click", () => d.remove());
+    },
+    // A <label> for a consent toggle must never be clicked (it would flip the option)
+    labeltoggle() {
+      bar(BANNER + '<input type="checkbox" id="mkt"><label for="mkt" style="cursor:pointer" data-track="label">Accept marketing cookies</label>');
+      document.getElementById("mkt").addEventListener("change", () => { window.__clicks.toggled = 1; });
+    },
+    // OneTrust second layer: the preference center is open, its "Allow All"
+    otpc() {
+      const d = document.createElement("div");
+      d.id = "onetrust-pc-sdk";
+      d.style.cssText = "position:fixed;inset:10%;background:#fff;z-index:9999;padding:16px";
+      d.innerHTML = '<h3>Privacy preference center</h3><p>We use cookies. Choose which ones you allow.</p>' +
+        '<button class="save-preference-btn-handler" data-track="reject">Confirm my choices</button>' +
+        '<button id="accept-recommended-btn-handler" data-track="accept">Allow all</button>';
+      document.body.appendChild(d);
+      d.querySelector("[data-track=accept]").addEventListener("click", () => d.remove());
+    },
+    // Banner whose accept button ignores us and which a framework keeps
+    // re-rendering (a new element each time, same id)
+    rerender() {
+      const render = () => {
+        const old = document.getElementById("cookie-root");
+        if (old) old.remove();
+        const d = bar(BANNER + '<button data-track="accept">Accept all</button>');
+        d.id = "cookie-root";
+        d.querySelector("button").addEventListener("click", (e) => e.stopImmediatePropagation());
+      };
+      render();
+      setInterval(render, 700);
+    },
     // Consent form that submits (server-side CMPs, e.g. Yahoo)
     form() {
       const d = bar('<form onsubmit="event.preventDefault(); window.__clicks.submitted = (window.__clicks.submitted||0)+1; this.parentElement.remove();">' +

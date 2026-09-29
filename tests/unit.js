@@ -79,12 +79,16 @@ const crawlCases = [
   // leaving the site after any action is suspicious
   ["cross-site navigation", page("https://a.example/", true), page("https://shop.other.example/", false),
     [act("CMP selector #x", "accept")], "suspicious"],
+  // hln.be: without the extension the run ends on the consent host; with it,
+  // back on hln.be. Returning to the requested site is not "leaving".
+  ["consent-host round trip (hln.be)", page("https://myprivacy.dpgmedia.be/consent", true),
+    page("https://www.hln.be/", false), [act("container", "akkoord")], "accepted", "https://hln.be"],
   ["missed", page("https://x.example/", true), page("https://x.example/", true), [], "missed"],
   ["no banner", page("https://x.example/", false), page("https://x.example/", false), [], "no-banner"],
 ];
-for (const [name, control, withExt, activity, want] of crawlCases) {
+for (const [name, control, withExt, activity, want, requested] of crawlCases) {
   checks++;
-  const got = classify(control, withExt, activity);
+  const got = classify(control, withExt, activity, requested || control.finalUrl);
   if (got !== want) {
     failed++;
     console.log(`  \u2717 crawl classify (${name}) = ${got}, expected ${want}`);
