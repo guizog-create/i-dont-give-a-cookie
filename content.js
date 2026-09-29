@@ -72,6 +72,7 @@
     const CMP_ACCEPT_SELECTORS = [
       // OneTrust
       "#onetrust-accept-btn-handler",
+      "#accept-recommended-btn-handler",   // OneTrust preference center "Allow all"
       ".onetrust-close-btn-handler",
       // Cookiebot (Cybot)
       "#CybotCookiebotDialogBodyLevelButtonLevelOptinAllowAll",
@@ -217,6 +218,7 @@
     const CMP_CONTAINER_SELECTORS = [
       "#onetrust-banner-sdk",
       "#onetrust-consent-sdk",
+      "#onetrust-pc-sdk",
       "#CybotCookiebotDialog",
       "#didomi-host",
       "#didomi-popup",
@@ -273,7 +275,7 @@
     // ═══════════════════════════════════════════════════════════════════════════
 
     const CSS_HIDE_SELECTORS = [
-      "#onetrust-banner-sdk", "#onetrust-consent-sdk", ".onetrust-pc-dark-filter",
+      "#onetrust-banner-sdk", "#onetrust-consent-sdk", "#onetrust-pc-sdk", ".onetrust-pc-dark-filter",
       "#CybotCookiebotDialog", "#CybotCookiebotDialogBodyUnderlay",
       "#didomi-host", "#didomi-popup", ".didomi-popup-backdrop",
       ".qc-cmp2-container", "#qcCmpUi", ".qc-cmp2-overlay",
@@ -434,6 +436,9 @@
       "akkoord en doorgaan", "accepteren en doorgaan", "doorgaan met advertenties",
       "verder met advertenties", "ga verder met advertenties", "accepteer alles",
       "souhlasit a pokračovat", "přijmout a pokračovat", "souhlasím a pokračovat",
+      "pokračovat s cílenou reklamou", "pokračovat s reklamou", "souhlasím s reklamou",
+      "s reklamou zdarma", "zobrazovat s reklamou", "gratis met advertenties",
+      "doorgaan met reclame", "ga door met advertenties",
       "rozumím a souhlasím", "hyväksy ja jatka", "godkänn och fortsätt",
       "acceptera och fortsätt", "akzeptieren und schließen", "annehmen und schließen",
       "alle cookies zulassen", "einwilligen und weiter", "zustimmen & weiter",
@@ -1174,12 +1179,51 @@
       "a", "[onclick]", "[tabindex='0']",
     ].join(",");
 
+    // Many banners use plain <div>/<span> "buttons" with script-attached
+    // handlers. Inside a confirmed consent box, also consider elements that
+    // look clickable: button-ish class/id, or a pointer cursor.
+    const LOOSE_CLICKABLE_SELECTOR = [
+      "[class*='btn' i]", "[class*='button' i]", "[class*='accept' i]", "[id*='accept' i]",
+      "[class*='agree' i]", "[class*='allow' i]", "[class*='consent' i]",
+      "div", "span", "li", "p",   // not <label>: clicking one toggles its checkbox
+    ].join(",");
+    const MAX_LOOSE_CANDIDATES = 300;
+
+    function looksClickable(el) {
+      if (/btn|button|accept|agree|allow/i.test(classAndId(el))) return true;
+      try {
+        return getComputedStyle(el).cursor === "pointer";
+      } catch (e) {
+        return false;
+      }
+    }
+
+    // Real controls first; then clickable-looking leaves. A loose element that
+    // contains another candidate is a wrapper: clicking it would not reach the
+    // inner element's listener, so only the innermost one is kept.
+    function clickableCandidates(container) {
+      const roots = collectRoots(container);
+      const strict = queryAllDeep(roots, CLICKABLE_SELECTOR);
+      const strictSet = new Set(strict);
+      const loose = [];
+      for (const el of queryAllDeep(roots, LOOSE_CLICKABLE_SELECTOR)) {
+        if (loose.length >= MAX_LOOSE_CANDIDATES) break;
+        if (strictSet.has(el) || el.closest(CLICKABLE_SELECTOR)) continue;
+        if ((el.textContent || "").length > CONFIG.maxButtonTextLength * 2) continue;
+        if (looksClickable(el)) loose.push(el);
+      }
+      const leaves = loose.filter((el) =>
+        !loose.some((other) => other !== el && el.contains(other)) &&
+        !strict.some((other) => el.contains(other)));
+      return strict.concat(leaves).map((el) => ({ el, loose: !strictSet.has(el) }));
+    }
+
     function findAcceptButtonInContainer(container) {
       const candidates = [];
       // US "do not sell / privacy choices" dialogs: "Confirm" or "OK" there
       // saves opt-out settings. Only an explicit "accept all" is ours to click.
       const choicesDialog = RE_PRIVACY_CHOICES.test(visibleText(container));
-      for (const el of queryAllDeep(collectRoots(container), CLICKABLE_SELECTOR)) {
+      for (const { el, loose } of clickableCandidates(container)) {
         if (!isVisible(el)) continue;
         const text = buttonText(el);
         if (isBadTarget(el, text)) continue;
@@ -1195,6 +1239,7 @@
         if (tag === "BUTTON" || tag === "INPUT") typeBonus = 3;
         else if (el.getAttribute("role") === "button") typeBonus = 2;
         else if (tag === "A") typeBonus = 0;
+        if (loose) typeBonus = 0; // real controls win ties
 
         let styleBonus = 0;
         try {
@@ -1336,7 +1381,17 @@
 
     function stillShowing(target) {
       if (isVisible(target.el)) return true;
-      return !!(target.container && isVisible(target.container) && target.container.contains(target.el));
+      if (target.container && isVisible(target.container) && target.container.contains(target.el)) return true;
+      // The element may be gone only because a framework re-rendered the
+      // banner: if the same button is on screen again, it wasn't dismissed.
+      // (A genuine second consent step also lands here, and gets clicked.)
+      if (!target.label) return false;
+      try {
+        const again = findTarget();
+        return !!(again && again.el !== target.el && buttonText(again.el) === target.label);
+      } catch (e) {
+        return false;
+      }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -1345,13 +1400,26 @@
 
     let cssFallbackInjected = false;
 
+    // Hide by a stable selector too: frameworks that re-render the banner
+    // replace the element and drop our attribute, but keep its id
+    function stableHideRule(container) {
+      if (!container || !container.id || typeof CSS === "undefined" || !CSS.escape) return "";
+      if (container === document.body || container === document.documentElement) return "";
+      return `#${CSS.escape(container.id)} { display: none !important; }\n`;
+    }
+
     function injectCssFallback(target) {
       try {
         if (target && target.container) target.container.setAttribute("data-idgac-hidden", "");
+        const extraRule = stableHideRule(target && target.container);
+        const existing = document.getElementById("idgac-css-fallback");
+        if (existing && extraRule && !existing.textContent.includes(extraRule)) {
+          existing.textContent += extraRule;
+        }
         if (!document.getElementById("idgac-css-fallback")) {
           const style = document.createElement("style");
           style.id = "idgac-css-fallback";
-          style.textContent = CSS_HIDE_RULES;
+          style.textContent = CSS_HIDE_RULES + extraRule;
           (document.head || document.documentElement).appendChild(style);
         }
         hideBlockingBackdrops();
@@ -1554,7 +1622,8 @@
           return;
         }
         try {
-          log(`Clicking via ${target.strategy}:`, buttonText(target.el));
+          target.label = buttonText(target.el);
+          log(`Clicking via ${target.strategy}:`, target.label);
           activate(target.el);
         } catch (e) {
           logError("Click failed:", e);

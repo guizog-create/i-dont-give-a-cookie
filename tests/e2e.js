@@ -220,7 +220,7 @@ const tests = [
     async run({ page }) {
       const failures = [];
       const langs = ["de", "pl", "cs", "et", "lv", "lt", "hr", "sl", "bg", "sk",
-        "ca", "eu", "is", "sr", "mk", "sq", "ga", "mt", "he", "fa", "fil", "nl-wall", "cs-wall"];
+        "ca", "eu", "is", "sr", "mk", "sq", "ga", "mt", "he", "fa", "fil", "nl-wall", "cs-wall", "cs-wall2"];
       for (let i = 0; i < langs.length; i++) {
         await page.goto(url(`languages.html?lang=${langs[i]}`, `127.0.${4 + Math.floor(i / 200)}.${10 + (i % 200)}`));
         const ok = await waitFor(async () => (await clicks(page)).accept, 4000);
@@ -235,7 +235,8 @@ const tests = [
     name: "layouts & widgets: dialog, popover, icon buttons, text quirks, forms, about:blank/srcdoc frames",
     async run({ page }) {
       const failures = [];
-      const cases = ["dialog", "popover", "icons", "quirks", "zwsp", "turkish", "fullwidth", "form", "srcdoc", "blank"];
+      const cases = ["dialog", "popover", "icons", "quirks", "zwsp", "turkish", "fullwidth", "form", "srcdoc", "blank",
+        "divbuttons", "pointerspan", "otpc"];
       for (let i = 0; i < cases.length; i++) {
         await page.goto(url(`layouts.html?case=${cases[i]}`, `127.0.5.${10 + i}`));
         const ok = await waitFor(async () => {
@@ -248,6 +249,28 @@ const tests = [
         if ((c.accept || 0) > 1 || (c.submitted || 0) > 1) failures.push(`${cases[i]}: activated more than once`);
       }
       expect(!failures.length, failures.join("; "));
+    },
+  },
+  {
+    name: "SAFETY: never clicks a label (it would toggle a consent option)",
+    async run({ page }) {
+      await page.goto(url("layouts.html?case=labeltoggle"));
+      await sleep(3000);
+      const c = await clicks(page);
+      expect(!c.label && !c.toggled, "clicked a <label> and flipped a consent toggle");
+    },
+  },
+  {
+    name: "CSS fallback survives a framework re-rendering the banner",
+    async run({ page }) {
+      await page.goto(url("layouts.html?case=rerender"));
+      const hidden = () => page.evaluate(() => {
+        const el = document.getElementById("cookie-root");
+        return !el || getComputedStyle(el).display === "none";
+      });
+      const ok = await waitFor(hidden, 14000);
+      await sleep(2000); // several more re-renders
+      expect(ok && await hidden(), "re-rendered banner is visible again after the CSS fallback");
     },
   },
   {
