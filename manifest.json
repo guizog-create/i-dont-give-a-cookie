@@ -1,12 +1,13 @@
 {
   "manifest_version": 3,
   "name": "I Don't Give a Cookie",
-  "description": "Automatically accepts cookie consent banners on virtually any website, in 25+ languages and all major consent platforms.",
-  "version": "2.5.0",
+  "description": "Automatically accepts cookie consent banners on virtually any website, in 45+ languages and all major consent platforms.",
+  "version": "2.6.0",
   "minimum_chrome_version": "111",
   "permissions": [
     "storage",
-    "activeTab"
+    "activeTab",
+    "scripting"
   ],
   "icons": {
     "16": "icons/icon16.png",
@@ -31,21 +32,15 @@
         "<all_urls>"
       ],
       "js": [
-        "cmp-api.js"
-      ],
-      "run_at": "document_start",
-      "all_frames": true,
-      "world": "MAIN"
-    },
-    {
-      "matches": [
-        "<all_urls>"
-      ],
-      "js": [
         "content.js"
       ],
       "run_at": "document_idle",
-      "all_frames": true
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
     }
+  ],
+  "host_permissions": [
+    "<all_urls>"
   ]
 }

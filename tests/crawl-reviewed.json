@@ -6,6 +6,12 @@
       "action": "container \"akceptuję i przechodzę do serwisu\"",
       "reason": "wp.pl's RODO consent board ('I accept and continue to the site'); it's an in-flow full-page screen, so the control detector misses it",
       "date": "2026-09-28"
+    },
+    {
+      "site": "interia.pl",
+      "action": "container \"przejdź do serwisu\"",
+      "reason": "Interia's RODO consent board ('Go to the site' = accept), same board and label as onet.pl, which the control detector does see",
+      "date": "2026-09-29"
     }
   ]
 }

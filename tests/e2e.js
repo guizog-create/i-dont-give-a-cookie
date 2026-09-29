@@ -216,18 +216,64 @@ const tests = [
     },
   },
   {
-    name: "gap: accept labels and cookie words in 10 more languages",
+    name: "languages: accept labels and cookie words, reject/subscribe never clicked",
     async run({ page }) {
       const failures = [];
-      const langs = ["de", "pl", "cs", "et", "lv", "lt", "hr", "sl", "bg", "sk"];
+      const langs = ["de", "pl", "cs", "et", "lv", "lt", "hr", "sl", "bg", "sk",
+        "ca", "eu", "is", "sr", "mk", "sq", "ga", "mt", "he", "fa", "fil", "nl-wall", "cs-wall"];
       for (let i = 0; i < langs.length; i++) {
-        await page.goto(url(`languages.html?lang=${langs[i]}`, `127.0.0.${200 + i}`));
+        await page.goto(url(`languages.html?lang=${langs[i]}`, `127.0.${4 + Math.floor(i / 200)}.${10 + (i % 200)}`));
         const ok = await waitFor(async () => (await clicks(page)).accept, 4000);
         const c = await clicks(page);
         if (!ok) failures.push(`${langs[i]}: not accepted`);
         if (c.reject) failures.push(`${langs[i]}: clicked the reject/settings button`);
       }
       expect(!failures.length, failures.join("; "));
+    },
+  },
+  {
+    name: "layouts & widgets: dialog, popover, icon buttons, text quirks, forms, about:blank/srcdoc frames",
+    async run({ page }) {
+      const failures = [];
+      const cases = ["dialog", "popover", "icons", "quirks", "zwsp", "turkish", "fullwidth", "form", "srcdoc", "blank"];
+      for (let i = 0; i < cases.length; i++) {
+        await page.goto(url(`layouts.html?case=${cases[i]}`, `127.0.5.${10 + i}`));
+        const ok = await waitFor(async () => {
+          const c = await clicks(page);
+          return cases[i] === "form" ? c.submitted : c.accept;
+        }, 5000);
+        const c = await clicks(page);
+        if (!ok) failures.push(`${cases[i]}: not accepted`);
+        if (c.reject) failures.push(`${cases[i]}: clicked reject`);
+        if ((c.accept || 0) > 1 || (c.submitted || 0) > 1) failures.push(`${cases[i]}: activated more than once`);
+      }
+      expect(!failures.length, failures.join("; "));
+    },
+  },
+  {
+    name: "SAFETY: never confirms a US 'Do Not Sell / Do Not Process' dialog",
+    async run({ page }) {
+      await page.goto(url("layouts.html?case=ccpa"));
+      await sleep(3000);
+      const c = await clicks(page);
+      expect(!c.confirm && !c.ok, `clicked ${c.confirm ? "Confirm" : "OK"} in a privacy-choices dialog`);
+    },
+  },
+  {
+    name: "SAFETY: never clicks a cookie notice inside a small ad frame",
+    async run({ page }) {
+      await page.goto(url("layouts.html?case=adframe"));
+      await sleep(3500);
+      expect(!(await clicks(page)).ad, "clicked 'Accept' inside a 728x90 ad frame");
+    },
+  },
+  {
+    name: "late banner: appears after the 30 s scan window (slow)",
+    slow: true,
+    async run({ page }) {
+      await page.goto(url("layouts.html?case=late"));
+      const ok = await waitFor(async () => (await clicks(page)).accept, 42000, 500);
+      expect(ok, "banner shown after 34 s was not accepted");
     },
   },
   {
@@ -352,6 +398,31 @@ const tests = [
     },
   },
   {
+    name: "PRIVACY: a page cannot detect or drive the extension",
+    async run({ page }) {
+      await page.goto(url("probe.html"));
+      await sleep(3500);
+      const probe = await page.evaluate(() => window.__probe);
+      expect(!probe.answered, "the extension answered a page's probe event (fingerprinting)");
+      expect(!probe.apiCalled, "a page made the extension call OneTrust.AllowAll()");
+      expect(!probe.domTraces.length, `DOM traces on a page without a banner: ${probe.domTraces.join(", ")}`);
+    },
+  },
+  {
+    name: "PRIVACY: persistent storage keeps no readable list of visited sites",
+    async run({ page, worker }) {
+      const host = `127.0.0.${hostCounter}`;
+      await page.goto(url("onetrust.html"));
+      await waitFor(async () => (await clicks(page)).accept);
+      await waitFor(async () => (await worker.evaluate(() => chrome.storage.local.get("stats"))).stats, 3000);
+      await sleep(500);
+      const dump = JSON.stringify(await worker.evaluate(() => chrome.storage.local.get(null)));
+      expect(!dump.includes(host), `chrome.storage.local contains the visited site ${host}`);
+      const { stats } = await worker.evaluate(() => chrome.storage.local.get("stats"));
+      expect(stats.total === 1 && Object.keys(stats.sites).length === 1, "stats not counted");
+    },
+  },
+  {
     name: "SAFETY: never calls a CMP API when its banner isn't showing",
     async run({ page }) {
       await page.goto(url("api-hidden.html"));
@@ -429,7 +500,10 @@ const tests = [
       expect(!Object.keys(all).some((k) => k.startsWith("__IDGAC__")), "legacy keys not removed");
       expect(all.totalDismissed === undefined, "totalDismissed not removed");
       expect(all.stats && all.stats.total === 9, `total is ${all.stats && all.stats.total}, expected 9`);
-      expect(all.stats.sites["example.com"].count === 3, "per-site count lost");
+      const keys = Object.keys(all.stats.sites);
+      expect(keys.length === 2, `expected 2 distinct sites, got ${keys.length}`);
+      expect(keys.every((k) => /^[0-9a-f]{16}$/.test(k)), `readable site names kept: ${keys.join(", ")}`);
+      expect(Object.values(all.stats.sites).some((e) => e.count === 3), "per-site count lost");
     },
   },
   {
@@ -476,9 +550,9 @@ async function resetExtensionState(worker) {
 
 // ─── Perf benchmark ─────────────────────────────────────────────────────────
 
-async function measureLag(context, host) {
+async function measureLag(context, host, file = "perf.html") {
   const page = await context.newPage();
-  await page.goto(url("perf.html", host));
+  await page.goto(url(file, host));
   await sleep(10000);
   const lag = await page.evaluate(() => window.__lag);
   await page.close();
@@ -513,14 +587,19 @@ async function measureLag(context, host) {
   }
 
   if (runPerf) {
-    const withExt = await measureLag(context, "127.0.0.250");
-    const { context: bare } = await launch(false);
-    const without = await measureLag(bare, "127.0.0.251");
-    await bare.close();
     const fmt = (l) => `total ${l.total.toFixed(0)} ms, worst ${l.max.toFixed(0)} ms`;
-    console.log(`\n  main-thread lag over 10 s on a 6k-element page with a live ticker:`);
-    console.log(`    without extension: ${fmt(without)}`);
-    console.log(`    with extension:    ${fmt(withExt)}`);
+    const { context: bare } = await launch(false);
+    for (const [file, label] of [
+      ["perf.html", "6k-element page with a live ticker"],
+      ["perf-frames.html", "page with 40 about:blank ad/tracking frames"],
+    ]) {
+      const withExt = await measureLag(context, "127.0.0.250", file);
+      const without = await measureLag(bare, "127.0.0.251", file);
+      console.log(`\n  main-thread lag over 10 s, ${label}:`);
+      console.log(`    without extension: ${fmt(without)}`);
+      console.log(`    with extension:    ${fmt(withExt)}`);
+    }
+    await bare.close();
   }
 
   await context.close();
