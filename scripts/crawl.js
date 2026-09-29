@@ -92,6 +92,7 @@ function detectBanner() {
   ].join("|"), "i");
   const FRAME_RE = /consent|privacy-mgmt|cookie|cmp|sp_message|trustarc|truste|didomi|onetrust|quantcast/i;
   const HINT_RE = /cookie|consent|gdpr|cmp|rodo|privacy/i;
+  const CHOICES_RE = /do not (sell|share|process) my personal|opt[- ]out of the sale/i;
   const vw = innerWidth;
   const vh = innerHeight;
   const found = [];
@@ -109,7 +110,9 @@ function detectBanner() {
       const u = new URL(f.src, location.href);
       where = u.hostname + u.pathname;
     } catch (e) { /* no src */ }
-    return `${where} ${f.id} ${f.name} ${f.title}`;
+    // Not the name: ad safeframes carry a serialized config (with consent
+    // strings) in it
+    return `${where} ${f.id} ${f.title}`;
   };
   // Text outside links and buttons: a menu with a "Manage cookies" link or
   // button isn't a banner; a banner's own sentence sits outside its buttons
@@ -137,7 +140,11 @@ function detectBanner() {
         continue;
       }
       const text = ownText(el);
-      if (text && text.length < 5000 && RE.test(text)) found.push({ kind: "element", text: text.slice(0, 140) });
+      // US "Do Not Sell / Do Not Process" dialogs are privacy settings, not
+      // consent banners; the extension deliberately leaves them alone
+      if (text && text.length < 5000 && RE.test(text) && !CHOICES_RE.test(text)) {
+        found.push({ kind: "element", text: text.slice(0, 140) });
+      }
     }
   };
   visit(document);
@@ -228,14 +235,18 @@ const siteOf = (u) => {
 // "CMP selector .sp_choice_type_11 "accept"": what we did, without the frame
 const actionSignature = (a) => `${a.strategy}${a.label ? ` "${a.label}"` : ""}`;
 
-function classify(control, withExt, activity) {
+function classify(control, withExt, activity, requestedUrl = control.finalUrl) {
   if (!control.ok || !withExt.ok) return "error";
   const actions = activity.filter((a) => a.event === "action");
   const acted = actions.length > 0;
   const css = activity.some((a) => a.event === "cssFallback");
-  // Consent walls often redirect back to the article: only leaving the site counts
-  const leftSite = acted && control.finalUrl && withExt.finalUrl &&
-    siteOf(control.finalUrl) !== siteOf(withExt.finalUrl);
+  // Consent flows redirect: to a consent host and back (hln.be ->
+  // myprivacy.dpgmedia.be -> hln.be), or back to the article. Only ending up
+  // on a site that is neither the one requested nor where the control run
+  // ended counts as leaving.
+  const endSite = withExt.finalUrl && siteOf(withExt.finalUrl);
+  const leftSite = acted && !!endSite &&
+    endSite !== siteOf(requestedUrl) && endSite !== siteOf(control.finalUrl);
 
   if (leftSite) return "suspicious";
   if (acted && !control.banner.present) {
@@ -287,7 +298,7 @@ function writeReports(outDir, rows, startedAt) {
     "",
     newSuspicious.length
       ? `**${newSuspicious.length} new suspicious action(s).** Check them in report.html; if an action is fine, ` +
-        "add it to `tests/crawl-reviewed.json` so it stops failing the run."
+        "add it to `tests/crawl-reviewed.json` so manual gate runs (\"fail on suspicious\") accept it."
       : "No new suspicious actions (suspicious results already reviewed are listed below as such).",
     "",
   ];
@@ -343,7 +354,7 @@ async function main() {
       const e = await visit(ext.context, url, opts, path.join(opts.out, "shots", `${s}.ext.jpg`));
       const hosts = [url, c.finalUrl, e.finalUrl].map((u) => { try { return new URL(u).hostname; } catch (_) { return null; } });
       const activity = await activityFor(ext.worker, hosts).catch(() => []);
-      const outcome = classify(c, e, activity);
+      const outcome = classify(c, e, activity, url);
       const isNewSuspicious = outcome === "suspicious" && !isReviewed(url, activity, reviewed);
       const actions = activity.filter((a) => a.event === "action")
         .map((a) => `${actionSignature(a)} (${a.frame})`);
