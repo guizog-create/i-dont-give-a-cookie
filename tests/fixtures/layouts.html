@@ -1,0 +1,117 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Layouts and widgets</title></head><body>
+<script src="/harness.js"></script>
+<p>Page content.</p>
+<!-- One banner per page, chosen by ?case= : layouts, widgets and text quirks
+     seen on real sites -->
+<script>
+  const params = new URLSearchParams(location.search);
+  const BANNER = 'We use cookies to improve your experience. ';
+  const bar = (inner) => {
+    const d = document.createElement("div");
+    d.style.cssText = "position:fixed;bottom:0;left:0;right:0;min-height:80px;background:#fff;z-index:9999;padding:10px";
+    d.innerHTML = inner;
+    document.body.appendChild(d);
+    return d;
+  };
+  const track = (root) => {
+    root.querySelectorAll("[data-track]").forEach((b) => b.addEventListener("click", () => {
+      window.__clicks[b.dataset.track] = (window.__clicks[b.dataset.track] || 0) + 1;
+    }));
+  };
+  const cases = {
+    // <dialog> opened with showModal(): lives in the top layer
+    dialog() {
+      const d = document.createElement("dialog");
+      d.innerHTML = BANNER + '<button data-track="reject">Reject all</button><button data-track="accept">Accept all</button>';
+      document.body.appendChild(d);
+      d.showModal();
+      d.querySelector("[data-track=accept]").onclick = () => d.close();
+    },
+    // Popover API: also top layer
+    popover() {
+      const d = document.createElement("div");
+      d.setAttribute("popover", "manual");
+      d.innerHTML = BANNER + '<button data-track="reject">Reject all</button><button data-track="accept">Accept all</button>';
+      document.body.appendChild(d);
+      d.showPopover();
+      d.querySelector("[data-track=accept]").onclick = () => d.hidePopover();
+    },
+    // Icon-only buttons with accessible names
+    icons() {
+      const d = bar(BANNER + '<button aria-label="Reject all cookies" data-track="reject">✕</button>' +
+        '<button aria-label="Accept all cookies" data-track="accept">✓</button>');
+      d.querySelector("[data-track=accept]").onclick = () => d.remove();
+    },
+    // Soft hyphen + CSS uppercase, zero-width space, Turkish dotted İ
+    quirks() {
+      const d = bar('Wir verwenden Cookies. <button data-track="reject">Ab&shy;lehnen</button>' +
+        '<button data-track="accept" style="text-transform:uppercase">Alle akzep&shy;tieren</button>');
+      d.querySelector("[data-track=accept]").onclick = () => d.remove();
+    },
+    zwsp() {
+      const d = bar(BANNER + '<button data-track="accept">Ac​cept a‍ll</button>');
+      d.querySelector("[data-track=accept]").onclick = () => d.remove();
+    },
+    turkish() {
+      const d = bar('Çerezleri kullanıyoruz. <button data-track="reject">Reddet</button>' +
+        '<button data-track="accept">TÜM ÇEREZLERE İZİN VER</button>');
+      d.querySelector("[data-track=accept]").onclick = () => d.remove();
+    },
+    // Full-width Latin (common on Japanese sites)
+    fullwidth() {
+      const d = bar('Cookieを使用しています。<button data-track="accept">ＡＣＣＥＰＴ ＡＬＬ</button>');
+      d.querySelector("[data-track=accept]").onclick = () => d.remove();
+    },
+    // Consent form that submits (server-side CMPs, e.g. Yahoo)
+    form() {
+      const d = bar('<form onsubmit="event.preventDefault(); window.__clicks.submitted = (window.__clicks.submitted||0)+1; this.parentElement.remove();">' +
+        BANNER + '<input type="submit" name="agree" value="Accept all" data-track="accept"></form>');
+    },
+    // US "do not sell" dialog: must NOT click "Confirm"/"OK" (saves opt-out settings)
+    ccpa() {
+      bar('Do Not Process My Personal Information. If you wish to opt-out of the sale, sharing to third parties, ' +
+        'or processing of your personal information, including cookies, use the switch below. ' +
+        '<button data-track="confirm">Confirm</button><button data-track="ok">OK</button>');
+    },
+    // A cookie notice inside a small ad frame must not be clicked
+    adframe() {
+      const f = document.createElement("iframe");
+      f.style.cssText = "position:fixed;bottom:0;left:0;width:728px;height:90px;border:0";
+      f.srcdoc = '<body style="margin:0;height:90px;background:#fe0">Great deals! This ad uses cookies. <button>Accept</button></body>';
+      document.body.appendChild(f);
+      f.onload = () => f.contentDocument.querySelector("button").addEventListener("click", () => {
+        window.__clicks.ad = (window.__clicks.ad || 0) + 1;
+      });
+    },
+    // Banners rendered into about:blank / srcdoc iframes (lefigaro-style)
+    srcdoc() {
+      const f = document.createElement("iframe");
+      f.style.cssText = "position:fixed;bottom:0;left:0;width:100%;height:160px;border:0;background:#fff;z-index:9999";
+      f.srcdoc = '<body style="margin:0;padding:10px">' + BANNER +
+        '<button data-track="reject">Reject all</button><button data-track="accept">Accept all</button></body>';
+      document.body.appendChild(f);
+      f.onload = () => {
+        track(f.contentDocument);
+        f.contentDocument.querySelector("[data-track=accept]").addEventListener("click", () => f.remove());
+      };
+    },
+    blank() {
+      const f = document.createElement("iframe");
+      f.style.cssText = "position:fixed;bottom:0;left:0;width:100%;height:160px;border:0;background:#fff;z-index:9999";
+      document.body.appendChild(f);
+      f.contentDocument.body.innerHTML = BANNER +
+        '<button data-track="reject">Reject all</button><button data-track="accept">Accept all</button>';
+      track(f.contentDocument);
+      f.contentDocument.querySelector("[data-track=accept]").addEventListener("click", () => f.remove());
+    },
+    // Appears after the 30 s scan window (after scrolling, say)
+    late() {
+      setTimeout(() => {
+        const d = bar(BANNER + '<button data-track="accept">Accept all</button>');
+        d.querySelector("[data-track=accept]").onclick = () => d.remove();
+      }, 34000);
+    },
+  };
+  cases[params.get("case")]();
+</script>
+</body></html>

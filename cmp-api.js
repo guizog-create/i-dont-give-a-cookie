@@ -1,29 +1,19 @@
-// I Don't Give a Cookie - page-world bridge to CMP JavaScript APIs
+// I Don't Give a Cookie - CMP "accept all" APIs
 //
-// Runs in the page's own JavaScript world ("world": "MAIN"), where CMP
-// globals such as window.OneTrust are visible (the isolated content script
-// cannot see them). It never acts on its own: content.js sends a request
-// only when that CMP's banner is visibly on screen and the site is allowed,
-// and verifies the result afterwards (falling back to clicking).
+// Loaded by the background service worker (importScripts). When content.js
+// has decided that a CMP's banner is visibly on screen on an allowed site,
+// the background runs cmpAcceptAll() in that frame's page world with
+// chrome.scripting.executeScript. Nothing is left resident in the page, so
+// a site cannot probe for the extension or trigger these calls itself.
+//
+// The function is serialized and executed in the page: it must stay
+// self-contained (no references to anything outside its own body).
 
-(() => {
-  "use strict";
+"use strict";
 
-  const REQUEST = "idgac:cmp-api-request";
-  const RESPONSE = "idgac:cmp-api-response";
-
-  // Captured at document_start, before page scripts can tamper with them
-  const parse = JSON.parse;
-  const stringify = JSON.stringify;
-  const dispatch = EventTarget.prototype.dispatchEvent;
-  const listen = EventTarget.prototype.addEventListener;
-  const Custom = CustomEvent;
-
+function cmpAcceptAll(cmp) {
   const isFn = (f) => typeof f === "function";
-
-  // Each handler returns true when it found and invoked the CMP's own
-  // "accept all" API. Only documented public APIs are used.
-  const HANDLERS = {
+  const handlers = {
     onetrust() {
       const ot = window.OneTrust;
       if (!ot || !isFn(ot.AllowAll)) return false;
@@ -86,23 +76,19 @@
       return true;
     },
   };
+  try {
+    return Object.prototype.hasOwnProperty.call(handlers, cmp) ? !!handlers[cmp]() : false;
+  } catch (e) {
+    return false;
+  }
+}
 
-  listen.call(document, REQUEST, (event) => {
-    let request;
-    try {
-      request = parse(event.detail);
-    } catch (e) {
-      return;
-    }
-    if (!request || typeof request.cmp !== "string") return;
+const CMP_API_IDS = [
+  "onetrust", "cookiebot", "didomi", "usercentrics", "klaro",
+  "consentmanager", "cookiescript", "tarteaucitron", "cookieconsent",
+];
 
-    let ok = false;
-    try {
-      const handler = Object.prototype.hasOwnProperty.call(HANDLERS, request.cmp) && HANDLERS[request.cmp];
-      ok = !!(handler && handler());
-    } catch (e) {
-      ok = false;
-    }
-    dispatch.call(document, new Custom(RESPONSE, { detail: stringify({ id: request.id, ok }) }));
-  });
-})();
+if (typeof self !== "undefined") {
+  self.IDGAC_cmpAcceptAll = cmpAcceptAll;
+  self.IDGAC_CMP_API_IDS = CMP_API_IDS;
+}

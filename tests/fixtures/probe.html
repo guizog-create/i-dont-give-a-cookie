@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Fingerprinting probe</title></head><body>
+<script src="/harness.js"></script>
+<p>A page with no cookie banner that tries to detect the extension.</p>
+<script>
+  window.__probe = { answered: false, apiCalled: false, domTraces: [] };
+  window.OneTrust = { AllowAll() { window.__probe.apiCalled = true; } };
+  // 1. Talk to the extension's page-world bridge, if it has one
+  document.addEventListener("idgac:cmp-api-request", () => {}, true);
+  document.addEventListener("idgac:cmp-api-response", () => { window.__probe.answered = true; });
+  setTimeout(() => {
+    document.dispatchEvent(new CustomEvent("idgac:cmp-api-request",
+      { detail: JSON.stringify({ id: "probe", cmp: "onetrust" }) }));
+  }, 1500);
+  // 2. Look for DOM traces the extension leaves on a page it didn't act on
+  setTimeout(() => {
+    const traces = document.querySelectorAll("[id^='idgac'], [data-idgac-hidden], style[id^='idgac']");
+    window.__probe.domTraces = [...traces].map((t) => t.outerHTML.slice(0, 80));
+  }, 2500);
+</script>
+</body></html>
