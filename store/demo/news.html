@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Daily Example</title>
+<!-- Fictional site used only for store screenshots (scripts/store-assets.js) -->
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: "Liberation Serif", Georgia, serif; color: #1c1c1c; background: #fff; }
+  header { border-bottom: 3px double #222; padding: 18px 48px 10px; display: flex; align-items: baseline; justify-content: space-between; }
+  header h1 { margin: 0; font-size: 40px; letter-spacing: 1px; }
+  header nav { font-family: "Liberation Sans", Arial, sans-serif; font-size: 14px; color: #555; }
+  header nav span { margin-left: 18px; }
+  main { display: grid; grid-template-columns: 2fr 1fr; gap: 40px; padding: 28px 48px; }
+  .kicker { font-family: "Liberation Sans", Arial, sans-serif; color: #b3261e; font-size: 13px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; }
+  article h2 { font-size: 38px; line-height: 1.12; margin: 6px 0 12px; }
+  .byline { font-family: "Liberation Sans", Arial, sans-serif; font-size: 13px; color: #666; margin-bottom: 16px; }
+  .photo { height: 230px; border-radius: 4px; background: linear-gradient(135deg, #8fb3d9, #3d6e9e 55%, #24476b); margin-bottom: 16px; }
+  article p { font-size: 18px; line-height: 1.6; margin: 0 0 14px; }
+  aside h3 { font-family: "Liberation Sans", Arial, sans-serif; font-size: 14px; letter-spacing: 1px; text-transform: uppercase; border-bottom: 1px solid #ddd; padding-bottom: 6px; }
+  aside .item { border-bottom: 1px solid #eee; padding: 12px 0; font-size: 17px; line-height: 1.35; }
+  aside .thumb { height: 90px; border-radius: 4px; background: linear-gradient(135deg, #d9c38f, #9e7a3d); margin-bottom: 8px; }
+
+  /* A typical consent layer: dimmed page, dialog at the bottom */
+  .cmp-backdrop { position: fixed; inset: 0; background: rgba(0, 0, 0, .55); z-index: 9998; }
+  .cmp-banner {
+    position: fixed; left: 50%; bottom: 36px; transform: translateX(-50%); width: 880px; z-index: 9999;
+    background: #fff; border-radius: 10px; box-shadow: 0 12px 40px rgba(0,0,0,.35); padding: 26px 30px;
+    font-family: "Liberation Sans", Arial, sans-serif; color: #222;
+  }
+  .cmp-banner h4 { margin: 0 0 8px; font-size: 20px; }
+  .cmp-banner p { margin: 0 0 18px; font-size: 14px; line-height: 1.5; color: #444; }
+  .cmp-actions { display: flex; gap: 12px; justify-content: flex-end; }
+  .cmp-actions button { font: inherit; font-size: 15px; font-weight: 700; padding: 11px 20px; border-radius: 6px; cursor: pointer; }
+  .cmp-secondary { background: #fff; color: #333; border: 1px solid #bbb; }
+  .cmp-primary { background: #1f5fbf; color: #fff; border: 1px solid #1f5fbf; }
+  body.cmp-open { overflow: hidden; }
+</style>
+</head>
+<body class="cmp-open">
+<header>
+  <h1>The Daily Example</h1>
+  <nav><span>World</span><span>Business</span><span>Science</span><span>Culture</span><span>Sport</span></nav>
+</header>
+<main>
+  <article>
+    <div class="kicker">Science</div>
+    <h2>Researchers map the quiet coastline where seabirds return every spring</h2>
+    <div class="byline">By A. Writer · 6 min read</div>
+    <div class="photo"></div>
+    <p>For three decades, a small team of volunteers has counted the birds that come back to the same stretch of coast each April. Their notebooks now form one of the longest continuous records of its kind.</p>
+    <p>The data show colonies shifting slowly north, following the fish they feed on. "Every year tells us a little more," says one of the volunteers.</p>
+    <p>The team hopes the record will help planners decide where new protected areas are most needed.</p>
+  </article>
+  <aside>
+    <h3>Most read</h3>
+    <div class="item"><div class="thumb"></div>City opens its first library inside a former train station</div>
+    <div class="item">The best autumn walks within an hour of the city</div>
+    <div class="item">How a village orchard saved forty old apple varieties</div>
+  </aside>
+</main>
+
+<div class="cmp-backdrop"></div>
+<div class="cmp-banner" role="dialog" aria-label="Cookie consent">
+  <h4>We value your privacy</h4>
+  <p>We and our partners use cookies and similar technologies to store and/or access information on your device, to personalise content and ads, and to measure how our site is used. You can accept all cookies or choose which ones to allow.</p>
+  <div class="cmp-actions">
+    <button class="cmp-secondary">Manage preferences</button>
+    <button class="cmp-secondary">Reject all</button>
+    <button class="cmp-primary">Accept all</button>
+  </div>
+</div>
+<script>
+  document.querySelector(".cmp-primary").addEventListener("click", () => {
+    document.querySelector(".cmp-banner").remove();
+    document.querySelector(".cmp-backdrop").remove();
+    document.body.classList.remove("cmp-open");
+  });
+</script>
+</body>
+</html>

@@ -112,6 +112,13 @@ The nightly **Real-site crawl** workflow is a report and never fails on its own 
 
 Tests live in `tests/`: each fixture in `tests/fixtures/` is a small page reproducing one real-world banner pattern or a false-positive trap, and `tests/e2e.js` asserts exactly what got clicked. When you add a CMP or fix a site, add a fixture for it.
 
+## Publishing
+
+- **Privacy policy:** [PRIVACY.md](PRIVACY.md) (use its GitHub URL in the store).
+- **Store submission kit:** [store/LISTING.md](store/LISTING.md) has every dashboard field ready to paste: description, single purpose, permission reasons, data-use answers.
+- **Store images:** `npm run store-assets` regenerates `store/screenshots/` (1280x800 screenshots and the 440x280 promo tile) from the real extension and a fictional demo page.
+- **Release:** bump `version` in `manifest.json` and `package.json`, merge, then push a tag `vX.Y.Z`. The Release workflow runs all tests and attaches the store zip to a GitHub release. Upload that zip.
+
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
