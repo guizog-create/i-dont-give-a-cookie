@@ -9,7 +9,8 @@
     "lint": "for f in cmp-api.js content.js background.js popup.js domain.js psl-rules.js rules.js; do node --check $f || exit 1; done",
     "pack": "node scripts/pack.js",
     "crawl": "node scripts/crawl.js",
-    "update-psl": "node scripts/update-psl.js"
+    "update-psl": "node scripts/update-psl.js",
+    "store-assets": "node scripts/store-assets.js"
   },
   "devDependencies": {
     "playwright": "1.56.1",
