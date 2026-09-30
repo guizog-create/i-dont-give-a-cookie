@@ -1,0 +1,48 @@
+name: Release
+
+# Push a version tag (e.g. `git tag v2.7.0 && git push origin v2.7.0`) to
+# build the Chrome Web Store zip and attach it to a GitHub release. The tag
+# must match manifest.json's version; the full test suite and a smoke test
+# of the packed zip must pass first, so the uploaded file is the tested one.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Tag must match the manifest version
+        run: |
+          version=$(node -p "require('./manifest.json').version")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match manifest.json version $version"
+            exit 1
+          fi
+      - run: npx playwright install --with-deps chromium
+      - run: npm run lint
+      - run: npm test
+      - run: npm run pack
+      - name: Smoke-test the packed zip
+        run: |
+          mkdir -p dist/ext && unzip -q dist/*.zip -d dist/ext
+          for t in "popup" "site rules" "CMP API" "onetrust"; do
+            IDGAC_EXT_DIR=dist/ext node tests/e2e.js "$t"
+          done
+      - name: Create the GitHub release with the store zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.zip \
+            --title "$GITHUB_REF_NAME" --generate-notes --verify-tag
