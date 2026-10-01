@@ -117,7 +117,7 @@ Tests live in `tests/`: each fixture in `tests/fixtures/` is a small page reprod
 - **Privacy policy:** [PRIVACY.md](PRIVACY.md) (use its GitHub URL in the store).
 - **Store submission kit:** [store/LISTING.md](store/LISTING.md) has every dashboard field ready to paste: description, single purpose, permission reasons, data-use answers.
 - **Store images:** `npm run store-assets` regenerates `store/screenshots/` (1280x800 screenshots and the 440x280 promo tile) from the real extension and a fictional demo page.
-- **Release:** bump `version` in `manifest.json` and `package.json`, merge, then push a tag `vX.Y.Z`. The Release workflow runs all tests and attaches the store zip to a GitHub release. Upload that zip.
+- **Release:** bump `version` in `manifest.json` and `package.json`, merge, then open Actions → Release → "Run workflow" on `main` (or push a tag `vX.Y.Z`). The Release workflow runs all tests, creates the `vX.Y.Z` tag and attaches the store zip to a GitHub release. Upload that zip.
 
 ## License
 
