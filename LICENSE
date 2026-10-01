@@ -1,21 +1,42 @@
-MIT License
+Copyright (c) 2026 guizog-create. All rights reserved.
 
-Copyright (c) 2026 guizog-create
+"I Don't Give a Cookie" (the extension, its source code, documentation, icons
+and images, together "the Software") is proprietary. The source code is
+published only so that users and reviewers can see exactly what the extension
+does. Publishing it does not grant any license to it.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+YOU MAY
+- install and use the official release of the extension (from the Chrome Web
+  Store or from this repository's GitHub releases) for your own use;
+- read the source code to review how it works;
+- load it unpacked from this repository in your own browser, for your own
+  use only, without sharing the result.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+YOU MAY NOT, without prior written permission from the copyright holder
+- copy, reproduce or mirror the Software or any part of it outside the uses
+  above;
+- modify it, translate it, or create derivative works from it;
+- distribute, publish, upload, sublicense, rent, sell or otherwise make it
+  available to anyone, including in any browser extension store, under any
+  name;
+- use any part of it (code, keyword lists, rules, images) in another product
+  or service.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+GitHub's Terms of Service give GitHub users the right to view this public
+repository and to fork it on GitHub. That right exists only within GitHub
+and grants none of the permissions listed under "YOU MAY NOT".
+
+To ask for permission, open an issue at
+https://github.com/guizog-create/i-dont-give-a-cookie/issues
+
+THIRD-PARTY DATA
+psl-rules.js contains data from the Public Suffix List
+(https://publicsuffix.org/), which is subject to the Mozilla Public License,
+v. 2.0 (https://mozilla.org/MPL/2.0/). That license applies to that data only.
+
+NO WARRANTY
+The Software is provided "as is", without warranty of any kind, express or
+implied, including but not limited to the warranties of merchantability,
+fitness for a particular purpose and noninfringement. In no event shall the
+copyright holder be liable for any claim, damages or other liability arising
+from, out of or in connection with the Software or its use.

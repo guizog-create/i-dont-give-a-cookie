@@ -47,7 +47,7 @@ YOUR CONTROL
 PRIVATE
 • Nothing leaves your browser: no servers, no analytics, no tracking
 • Keeps no list of the sites you visit
-• Open source: https://github.com/guizog-create/i-dont-give-a-cookie
+• Source code public for review: https://github.com/guizog-create/i-dont-give-a-cookie
 
 GOOD TO KNOW
 Accepting a banner means giving the website the consent it asks for, including cookies that may be used for advertising or analytics. If you would rather reject cookies, this extension is not the right tool for you.

@@ -3,7 +3,7 @@
   "version": "2.7.0",
   "private": true,
   "description": "Chrome extension that auto-accepts cookie consent banners",
-  "license": "MIT",
+  "license": "UNLICENSED",
   "scripts": {
     "test": "node tests/unit.js && node tests/e2e.js",
     "lint": "for f in cmp-api.js content.js background.js popup.js domain.js psl-rules.js rules.js; do node --check $f || exit 1; done",
