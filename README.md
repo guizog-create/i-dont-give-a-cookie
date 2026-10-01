@@ -121,4 +121,4 @@ Tests live in `tests/`: each fixture in `tests/fixtures/` is a small page reprod
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+Copyright (c) 2026 guizog-create. **All rights reserved.** The source is public so that anyone can check what the extension does, not for reuse: copying, modifying or redistributing it, including publishing it in any extension store, is not permitted. See [LICENSE](LICENSE) for the exact terms.
