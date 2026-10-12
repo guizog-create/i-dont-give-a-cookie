@@ -75,6 +75,11 @@ let port;
 let hostCounter = 10;
 const url = (file, host) => `http://${host || `127.0.0.${hostCounter}`}:${port}/${file}`;
 const clicks = (page) => page.evaluate(() => window.__clicks);
+// What the popup's "current site" line reads for the open test page
+const tabStatus = (worker) => worker.evaluate(async () => {
+  const tab = (await chrome.tabs.query({})).find((t) => /^http/.test(t.url || ""));
+  return tab ? (await chrome.storage.session.get(`tab:${tab.id}`))[`tab:${tab.id}`] || null : null;
+});
 
 const tests = [
   {
@@ -443,6 +448,33 @@ const tests = [
       expect(!dump.includes(host), `chrome.storage.local contains the visited site ${host}`);
       const { stats } = await worker.evaluate(() => chrome.storage.local.get("stats"));
       expect(stats.total === 1 && Object.keys(stats.sites).length === 1, "stats not counted");
+    },
+  },
+  {
+    name: "stats: counts a CMP iframe that the page removes on accept",
+    async run({ page, worker }) {
+      await page.goto(url("site.html"));
+      await waitFor(async () => (await clicks(page))["frame:accept"], 4000);
+      const counted = await waitFor(async () => {
+        const { stats } = await worker.evaluate(() => chrome.storage.local.get("stats"));
+        return stats && stats.total === 1;
+      }, 3000);
+      expect(counted, "accepted inside a removed CMP iframe but not counted");
+      const tab = await tabStatus(worker);
+      expect(tab && tab.dismissed === 1, `popup would show ${JSON.stringify(tab)} for this page`);
+    },
+  },
+  {
+    name: "stats: counts a banner on a site that reloads to apply consent",
+    async run({ page, worker }) {
+      await page.goto(url("reload-after-accept.html"));
+      const reloaded = await waitFor(async () => (await page.evaluate(() => sessionStorage.accepted)) === "1", 5000);
+      expect(reloaded, "banner was not accepted");
+      await sleep(1500);
+      const { stats } = await worker.evaluate(() => chrome.storage.local.get("stats"));
+      expect(stats && stats.total === 1, `total is ${stats && stats.total}, expected 1`);
+      const tab = await tabStatus(worker);
+      expect(tab && tab.dismissed === 1, `after the reload the popup would show ${JSON.stringify(tab)}`);
     },
   },
   {

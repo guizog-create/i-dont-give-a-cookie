@@ -120,7 +120,7 @@ https://github.com/guizog-create/i-dont-give-a-cookie/blob/main/PRIVACY.md
 
 ## 5. Before pressing "Submit for review"
 
-- [ ] Uploaded zip version matches `manifest.json` (currently 2.7.0)
+- [ ] Uploaded zip version matches `manifest.json` (currently 2.7.1)
 - [ ] You tried this exact version in your own Chrome for a day or two
 - [ ] Privacy policy URL opens without logging in
 - [ ] Screenshots show the current version
