@@ -1506,6 +1506,7 @@
       attempts: 0,       // clicks on the current banner
       successes: 0,      // banners dismissed on this page
       lastStrategy: null,
+      acted: false,      // clicked or called an API; outcome not known yet
       timers: new Set(),
       observer: null,
       lastScan: 0,
@@ -1607,10 +1608,12 @@
         if (target.api) {
           apiTried.add(target.api);
           log(`Calling ${target.api} accept-all API`);
+          state.acted = true;
+          state.lastStrategy = target.strategy;
           callCmpApi(target.api).then((ok) => {
             if (state.phase !== "clicking") return;
-            state.lastStrategy = target.strategy;
             if (!ok) {
+              state.acted = false;
               log(`${target.api} API unavailable, falling back to clicking`);
               state.phase = "scanning";
               scan();
@@ -1628,6 +1631,7 @@
         } catch (e) {
           logError("Click failed:", e);
         }
+        state.acted = true;
         state.attempts++;
         state.lastStrategy = target.strategy;
         state.phase = "verifying";
@@ -1647,6 +1651,7 @@
     }
 
     function onDismissed() {
+      state.acted = false;
       state.successes++;
       state.attempts = 0;
       log("Banner dismissed");
@@ -1663,6 +1668,7 @@
     }
 
     function onStillVisible(target) {
+      state.acted = false;
       // An API call that didn't close the banner doesn't use up a click attempt
       if (target.api || state.attempts < CONFIG.clickAttemptsPerBanner) {
         log(`Banner still visible after attempt ${state.attempts}, retrying`);
@@ -1747,6 +1753,18 @@
       // Acceptance lock: consent already given on this page load stays given.
       if (state.successes > 0 || cssFallbackInjected) return;
       setTimeout(() => arm("spa navigation"), CONFIG.spaRearmDelay);
+    }
+
+    // Accepting often ends the document before verification can run: the
+    // site reloads or navigates to apply consent, or the parent page removes
+    // the CMP iframe. Count that as accepted, or it never shows in the stats.
+    function onPageHide() {
+      if (!state.acted) return;
+      state.acted = false;
+      state.successes++;
+      log("Page unloaded right after accepting; counting it as dismissed");
+      sendToBackground("bannerDismissed", { strategy: state.lastStrategy });
+      stop("done"); // a page restored from the back/forward cache stays accepted
     }
 
     function setupSPADetection() {
@@ -1853,6 +1871,7 @@
         logError("Could not load settings, using defaults:", e);
       }
       if (IS_TOP) sendToBackground("pageStart");
+      addEventListener("pagehide", onPageHide);
       setupSPADetection();
       applyHideRules();
       if (canRun()) arm("page load");

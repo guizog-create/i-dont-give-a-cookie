@@ -1,0 +1,17 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Reload after consent</title></head><body>
+<script src="/harness.js"></script>
+<p>Like many publishers, this site reloads the page once consent is given.</p>
+<div id="onetrust-banner-sdk" style="position:fixed;bottom:0;left:0;right:0;z-index:2147483645;background:#fff;padding:20px">
+  <p>We use cookies to personalise content and ads.</p>
+  <button id="onetrust-accept-btn-handler">Accept All Cookies</button>
+</div>
+<script>
+  if (localStorage.consent) document.getElementById("onetrust-banner-sdk").remove();
+  const btn = document.getElementById("onetrust-accept-btn-handler");
+  if (btn) btn.onclick = () => {
+    localStorage.consent = "1";
+    sessionStorage.accepted = String(Number(sessionStorage.accepted || 0) + 1);
+    location.reload();
+  };
+</script>
+</body></html>

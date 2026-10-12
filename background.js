@@ -12,6 +12,7 @@ const LOOP_BACKOFF_MS = 10 * 60 * 1000;
 const MAX_TRACKED_SITES = 500;
 const MAX_ACTIVITY_ENTRIES = 20;
 const MAX_ACTIVITY_SITES = 200;        // session log keeps the most recent sites only
+const RELOAD_GRACE_MS = 10 * 1000;     // a reload this soon after accepting is the site applying consent
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SERIALIZED STORAGE ACCESS
@@ -168,9 +169,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
   switch (msg.action) {
     case "pageStart":
-      // Top frame (re)loaded: reset what the popup shows for this tab
+      // Top frame (re)loaded: reset what the popup shows for this tab, unless
+      // the same site just accepted a banner. Sites often reload to apply
+      // consent, and a CMP iframe can finish before the top frame starts.
       if (tabId != null) {
-        serialized(() => chrome.storage.session.remove(`tab:${tabId}`));
+        const key = `tab:${tabId}`;
+        serialized(async () => {
+          const entry = (await chrome.storage.session.get(key))[key];
+          if (entry && entry.site === site && Date.now() - (entry.at || 0) < RELOAD_GRACE_MS) return;
+          await chrome.storage.session.remove(key);
+        });
       }
       return false;
 
@@ -186,7 +194,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         stats.sites[key] = entry;
       });
       if (tabId != null) {
-        updateTab(tabId, (entry) => { entry.dismissed++; });
+        updateTab(tabId, (entry) => {
+          entry.dismissed++;
+          entry.site = site;
+          entry.at = Date.now();
+        });
         flashBadge(tabId);
       }
       return false;
